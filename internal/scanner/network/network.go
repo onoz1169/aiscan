@@ -285,11 +285,9 @@ func (s *NetworkScanner) Scan(target string, timeoutSec int) (*scanner.LayerResu
 	}
 
 	start := time.Now()
-	timeout := time.Duration(timeoutSec) * time.Second
-	perPortTimeout := timeout / time.Duration(len(defaultPorts))
-	if perPortTimeout < 500*time.Millisecond {
-		perPortTimeout = 500 * time.Millisecond
-	}
+	// Ports are scanned concurrently, so perPortTimeout is an independent per-connection limit.
+	// Cap at 3s to keep individual connections from blocking the scan indefinitely.
+	perPortTimeout := time.Duration(timeoutSec) * time.Second
 	if perPortTimeout > 3*time.Second {
 		perPortTimeout = 3 * time.Second
 	}

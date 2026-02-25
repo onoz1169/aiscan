@@ -108,33 +108,8 @@ func runScan(cmd *cobra.Command, args []string) error {
 		filterFindings(result, severityFilter)
 	}
 
-	switch outputFormat {
-	case "json":
-		if outputFile == "" {
-			outputFile = "aiscan-report.json"
-		}
-		if err := report.WriteJSON(result, outputFile); err != nil {
-			return fmt.Errorf("write json report: %w", err)
-		}
-		fmt.Fprintf(os.Stderr, "\nReport written to %s\n", outputFile)
-	case "markdown":
-		if outputFile == "" {
-			outputFile = "aiscan-report.md"
-		}
-		if err := report.WriteMarkdown(result, outputFile); err != nil {
-			return fmt.Errorf("write markdown report: %w", err)
-		}
-		fmt.Fprintf(os.Stderr, "\nReport written to %s\n", outputFile)
-	case "sarif":
-		if outputFile == "" {
-			outputFile = "aiscan-results.sarif"
-		}
-		if err := report.WriteSARIF(result, outputFile); err != nil {
-			return fmt.Errorf("write sarif report: %w", err)
-		}
-		fmt.Fprintf(os.Stderr, "\nReport written to %s\n", outputFile)
-	default: // terminal
-		report.PrintTerminal(result)
+	if err := writeReport(result, outputFormat, outputFile); err != nil {
+		return err
 	}
 
 	// Exit with code 1 based on --fail-on threshold
@@ -146,20 +121,34 @@ func runScan(cmd *cobra.Command, args []string) error {
 }
 
 func shouldFail(result *scanner.ScanResult, failOn string) bool {
-	counts := result.TotalFindings()
-	switch strings.ToLower(failOn) {
-	case "critical":
-		return counts[scanner.SeverityCritical] > 0
-	case "high":
-		return counts[scanner.SeverityCritical]+counts[scanner.SeverityHigh] > 0
-	case "medium":
-		return counts[scanner.SeverityCritical]+counts[scanner.SeverityHigh]+counts[scanner.SeverityMedium] > 0
-	case "low":
-		return counts[scanner.SeverityCritical]+counts[scanner.SeverityHigh]+counts[scanner.SeverityMedium]+counts[scanner.SeverityLow] > 0
-	case "none":
+	if strings.ToLower(failOn) == "none" {
 		return false
+	}
+	threshold := severityRank(severityFromString(failOn, scanner.SeverityHigh))
+	for _, layer := range result.Layers {
+		for _, f := range layer.Findings {
+			if severityRank(f.Severity) >= threshold {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func severityFromString(s string, fallback scanner.Severity) scanner.Severity {
+	switch strings.ToLower(s) {
+	case "critical":
+		return scanner.SeverityCritical
+	case "high":
+		return scanner.SeverityHigh
+	case "medium":
+		return scanner.SeverityMedium
+	case "low":
+		return scanner.SeverityLow
+	case "info":
+		return scanner.SeverityInfo
 	default:
-		return counts[scanner.SeverityCritical]+counts[scanner.SeverityHigh] > 0
+		return fallback
 	}
 }
 
@@ -181,22 +170,7 @@ func severityRank(s scanner.Severity) int {
 }
 
 func filterFindings(result *scanner.ScanResult, minSeverity string) {
-	var threshold int
-	switch strings.ToLower(minSeverity) {
-	case "critical":
-		threshold = 5
-	case "high":
-		threshold = 4
-	case "medium":
-		threshold = 3
-	case "low":
-		threshold = 2
-	case "info":
-		threshold = 1
-	default:
-		return
-	}
-
+	threshold := severityRank(severityFromString(minSeverity, scanner.SeverityInfo))
 	for i, layer := range result.Layers {
 		var filtered []scanner.Finding
 		for _, f := range layer.Findings {
@@ -206,6 +180,35 @@ func filterFindings(result *scanner.ScanResult, minSeverity string) {
 		}
 		result.Layers[i].Findings = filtered
 	}
+}
+
+type reportWriteFn func(*scanner.ScanResult, string) error
+
+type fileReportSpec struct {
+	defaultFile string
+	write       reportWriteFn
+}
+
+var fileReports = map[string]fileReportSpec{
+	"json":     {"aiscan-report.json", report.WriteJSON},
+	"markdown": {"aiscan-report.md", report.WriteMarkdown},
+	"sarif":    {"aiscan-results.sarif", report.WriteSARIF},
+}
+
+func writeReport(result *scanner.ScanResult, format, outFile string) error {
+	spec, ok := fileReports[format]
+	if !ok {
+		report.PrintTerminal(result)
+		return nil
+	}
+	if outFile == "" {
+		outFile = spec.defaultFile
+	}
+	if err := spec.write(result, outFile); err != nil {
+		return fmt.Errorf("write %s report: %w", format, err)
+	}
+	fmt.Fprintf(os.Stderr, "\nReport written to %s\n", outFile)
+	return nil
 }
 
 func buildScanners(layers []string) []scanner.Scanner {

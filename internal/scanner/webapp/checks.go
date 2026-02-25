@@ -100,20 +100,16 @@ func (s *WebAppScanner) analyzeCSPQuality(csp string, result *scanner.LayerResul
 	lower := strings.ToLower(csp)
 
 	if strings.Contains(lower, "'unsafe-inline'") {
-		hasScriptSrc := strings.Contains(lower, "script-src")
-		// unsafe-inline in script-src, or if no script-src directive (falls back to default-src)
-		if hasScriptSrc || !hasScriptSrc {
-			result.Findings = append(result.Findings, scanner.Finding{
-				ID:          "WEB-024",
-				Layer:       "webapp",
-				Title:       "CSP contains 'unsafe-inline'",
-				Description: "The Content-Security-Policy allows inline scripts, effectively bypassing XSS protections.",
-				Severity:    scanner.SeverityHigh,
-				Reference:   "OWASP A05:2021 - Security Misconfiguration",
-				Evidence:    fmt.Sprintf("CSP: %s", truncate(csp, 200)),
-				Remediation: "Remove 'unsafe-inline' from CSP. Use nonces or hashes for inline scripts.",
-			})
-		}
+		result.Findings = append(result.Findings, scanner.Finding{
+			ID:          "WEB-024",
+			Layer:       "webapp",
+			Title:       "CSP contains 'unsafe-inline'",
+			Description: "The Content-Security-Policy allows inline scripts, effectively bypassing XSS protections.",
+			Severity:    scanner.SeverityHigh,
+			Reference:   "OWASP A05:2021 - Security Misconfiguration",
+			Evidence:    fmt.Sprintf("CSP: %s", truncate(csp, 200)),
+			Remediation: "Remove 'unsafe-inline' from CSP. Use nonces or hashes for inline scripts.",
+		})
 	}
 
 	if strings.Contains(lower, "'unsafe-eval'") {

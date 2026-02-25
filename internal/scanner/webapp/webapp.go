@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -191,99 +192,99 @@ func (s *WebAppScanner) checkHTTPResponse(client *http.Client, target string, re
 	s.checkResponseBody(resp, result)
 }
 
+type headerCheck struct {
+	id          string
+	header      string
+	httpsOnly   bool
+	title       string
+	description string
+	severity    scanner.Severity
+	remediation string
+}
+
+var securityHeaderChecks = []headerCheck{
+	{
+		id: "WEB-001", header: "Content-Security-Policy",
+		title:       "Missing Content-Security-Policy header",
+		description: "The Content-Security-Policy header is not set, increasing risk of XSS attacks.",
+		severity:    scanner.SeverityMedium,
+		remediation: "Set a Content-Security-Policy header with a restrictive policy.",
+	},
+	{
+		id: "WEB-002", header: "Strict-Transport-Security", httpsOnly: true,
+		title:       "Missing Strict-Transport-Security header",
+		description: "HSTS header is not set. Browsers may allow downgrade to HTTP.",
+		severity:    scanner.SeverityHigh,
+		remediation: "Set Strict-Transport-Security header with max-age of at least 31536000.",
+	},
+	{
+		id: "WEB-003", header: "X-Frame-Options",
+		title:       "Missing X-Frame-Options header",
+		description: "Page can be embedded in iframes, enabling clickjacking attacks.",
+		severity:    scanner.SeverityMedium,
+		remediation: "Set X-Frame-Options to DENY or SAMEORIGIN.",
+	},
+	{
+		id: "WEB-004", header: "X-Content-Type-Options",
+		title:       "Missing X-Content-Type-Options header",
+		description: "Browser may MIME-sniff the response, leading to security issues.",
+		severity:    scanner.SeverityLow,
+		remediation: "Set X-Content-Type-Options to nosniff.",
+	},
+	{
+		id: "WEB-005", header: "Referrer-Policy",
+		title:       "Missing Referrer-Policy header",
+		description: "Referrer information may leak to third-party sites.",
+		severity:    scanner.SeverityLow,
+		remediation: "Set Referrer-Policy to strict-origin-when-cross-origin or no-referrer.",
+	},
+	{
+		id: "WEB-006", header: "Permissions-Policy",
+		title:       "Missing Permissions-Policy header",
+		description: "Browser features are not restricted via Permissions-Policy.",
+		severity:    scanner.SeverityInfo,
+		remediation: "Set a Permissions-Policy header to restrict browser features.",
+	},
+}
+
+var versionPattern = regexp.MustCompile(`\d+\.\d+`)
+
 // checkSecurityHeaders checks for missing security headers (A05:2021).
 func (s *WebAppScanner) checkSecurityHeaders(resp *http.Response, isHTTPS bool, result *scanner.LayerResult) {
-	csp := resp.Header.Get("Content-Security-Policy")
-	if csp == "" {
-		result.Findings = append(result.Findings, scanner.Finding{
-			ID:          "WEB-001",
-			Layer:       "webapp",
-			Title:       "Missing Content-Security-Policy header",
-			Description: "The Content-Security-Policy header is not set, increasing risk of XSS attacks.",
-			Severity:    scanner.SeverityMedium,
-			Reference:   "OWASP A05:2021 - Security Misconfiguration",
-			Evidence:    "Content-Security-Policy header not found in response.",
-			Remediation: "Set a Content-Security-Policy header with a restrictive policy.",
-		})
-	} else {
-		s.analyzeCSPQuality(csp, result)
-	}
+	const ref = "OWASP A05:2021 - Security Misconfiguration"
 
-	if isHTTPS && resp.Header.Get("Strict-Transport-Security") == "" {
+	for _, chk := range securityHeaderChecks {
+		if chk.httpsOnly && !isHTTPS {
+			continue
+		}
+		val := resp.Header.Get(chk.header)
+		if val != "" {
+			if chk.header == "Content-Security-Policy" {
+				s.analyzeCSPQuality(val, result)
+			}
+			continue
+		}
 		result.Findings = append(result.Findings, scanner.Finding{
-			ID:          "WEB-002",
+			ID:          chk.id,
 			Layer:       "webapp",
-			Title:       "Missing Strict-Transport-Security header",
-			Description: "HSTS header is not set. Browsers may allow downgrade to HTTP.",
-			Severity:    scanner.SeverityHigh,
-			Reference:   "OWASP A05:2021 - Security Misconfiguration",
-			Evidence:    "Strict-Transport-Security header not found in HTTPS response.",
-			Remediation: "Set Strict-Transport-Security header with max-age of at least 31536000.",
+			Title:       chk.title,
+			Description: chk.description,
+			Severity:    chk.severity,
+			Reference:   ref,
+			Evidence:    chk.header + " header not found in response.",
+			Remediation: chk.remediation,
 		})
 	}
 
-	if resp.Header.Get("X-Frame-Options") == "" {
-		result.Findings = append(result.Findings, scanner.Finding{
-			ID:          "WEB-003",
-			Layer:       "webapp",
-			Title:       "Missing X-Frame-Options header",
-			Description: "Page can be embedded in iframes, enabling clickjacking attacks.",
-			Severity:    scanner.SeverityMedium,
-			Reference:   "OWASP A05:2021 - Security Misconfiguration",
-			Evidence:    "X-Frame-Options header not found in response.",
-			Remediation: "Set X-Frame-Options to DENY or SAMEORIGIN.",
-		})
-	}
-
-	if resp.Header.Get("X-Content-Type-Options") == "" {
-		result.Findings = append(result.Findings, scanner.Finding{
-			ID:          "WEB-004",
-			Layer:       "webapp",
-			Title:       "Missing X-Content-Type-Options header",
-			Description: "Browser may MIME-sniff the response, leading to security issues.",
-			Severity:    scanner.SeverityLow,
-			Reference:   "OWASP A05:2021 - Security Misconfiguration",
-			Evidence:    "X-Content-Type-Options header not found in response.",
-			Remediation: "Set X-Content-Type-Options to nosniff.",
-		})
-	}
-
-	if resp.Header.Get("Referrer-Policy") == "" {
-		result.Findings = append(result.Findings, scanner.Finding{
-			ID:          "WEB-005",
-			Layer:       "webapp",
-			Title:       "Missing Referrer-Policy header",
-			Description: "Referrer information may leak to third-party sites.",
-			Severity:    scanner.SeverityLow,
-			Reference:   "OWASP A05:2021 - Security Misconfiguration",
-			Evidence:    "Referrer-Policy header not found in response.",
-			Remediation: "Set Referrer-Policy to strict-origin-when-cross-origin or no-referrer.",
-		})
-	}
-
-	if resp.Header.Get("Permissions-Policy") == "" {
-		result.Findings = append(result.Findings, scanner.Finding{
-			ID:          "WEB-006",
-			Layer:       "webapp",
-			Title:       "Missing Permissions-Policy header",
-			Description: "Browser features are not restricted via Permissions-Policy.",
-			Severity:    scanner.SeverityInfo,
-			Reference:   "OWASP A05:2021 - Security Misconfiguration",
-			Evidence:    "Permissions-Policy header not found in response.",
-			Remediation: "Set a Permissions-Policy header to restrict browser features.",
-		})
-	}
-
-	serverHeader := resp.Header.Get("Server")
-	if serverHeader != "" && containsVersion(serverHeader) {
+	if server := resp.Header.Get("Server"); server != "" && versionPattern.MatchString(server) {
 		result.Findings = append(result.Findings, scanner.Finding{
 			ID:          "WEB-007",
 			Layer:       "webapp",
 			Title:       "Server header reveals version information",
 			Description: "The Server header discloses software version, aiding attackers in fingerprinting.",
 			Severity:    scanner.SeverityLow,
-			Reference:   "OWASP A05:2021 - Security Misconfiguration",
-			Evidence:    fmt.Sprintf("Server: %s", serverHeader),
+			Reference:   ref,
+			Evidence:    fmt.Sprintf("Server: %s", server),
 			Remediation: "Remove or obscure version information from the Server header.",
 		})
 	}
@@ -414,22 +415,3 @@ func (s *WebAppScanner) checkTRACE(client *http.Client, target string, result *s
 	}
 }
 
-// containsVersion checks if a header value contains a version-like pattern (e.g. "1.2.3" or "/1.2").
-func containsVersion(value string) bool {
-	// Look for patterns like X.Y, X.Y.Z, or /X.Y
-	for i := 0; i < len(value); i++ {
-		if value[i] >= '0' && value[i] <= '9' {
-			// found a digit, check if followed by .digit pattern
-			for j := i + 1; j < len(value); j++ {
-				if value[j] == '.' {
-					if j+1 < len(value) && value[j+1] >= '0' && value[j+1] <= '9' {
-						return true
-					}
-				} else if value[j] < '0' || value[j] > '9' {
-					break
-				}
-			}
-		}
-	}
-	return false
-}
