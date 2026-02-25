@@ -3,8 +3,11 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
+	"github.com/briandowns/spinner"
+	"github.com/fatih/color"
 	"github.com/onoz1169/aiscan/internal/report"
 	"github.com/onoz1169/aiscan/internal/scanner"
 	"github.com/onoz1169/aiscan/internal/scanner/llm"
@@ -14,12 +17,16 @@ import (
 )
 
 var (
-	target     string
-	layers     []string
-	output     string
-	outputFile string
-	timeout    int
-	verbose    bool
+	target         string
+	layers         []string
+	outputFormat   string
+	outputFile     string
+	timeout        int
+	verbose        bool
+	failOn         string
+	quiet          bool
+	noColor        bool
+	severityFilter string
 )
 
 var scanCmd = &cobra.Command{
@@ -32,10 +39,14 @@ var scanCmd = &cobra.Command{
 func init() {
 	scanCmd.Flags().StringVarP(&target, "target", "t", "", "Target URL or hostname (required)")
 	scanCmd.Flags().StringSliceVarP(&layers, "layers", "l", []string{"network", "webapp", "llm"}, "Which layers to run")
-	scanCmd.Flags().StringVarP(&output, "output", "o", "terminal", "Output format: terminal, json, markdown")
-	scanCmd.Flags().StringVarP(&outputFile, "output-file", "f", "aiscan-report", "Output filename (without extension)")
+	scanCmd.Flags().StringVarP(&outputFormat, "format", "F", "terminal", "Output format: terminal, json, markdown, sarif")
+	scanCmd.Flags().StringVarP(&outputFile, "output", "o", "", "Output file path (stdout if empty, format auto-detected)")
 	scanCmd.Flags().IntVar(&timeout, "timeout", 10, "Timeout per scan in seconds")
 	scanCmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Verbose output")
+	scanCmd.Flags().StringVar(&failOn, "fail-on", "high", "Exit code 1 if findings at or above this severity: critical, high, medium, low, none")
+	scanCmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "Suppress banner and progress output")
+	scanCmd.Flags().BoolVar(&noColor, "no-color", false, "Disable ANSI color output")
+	scanCmd.Flags().StringVarP(&severityFilter, "severity", "s", "", "Only show findings at or above: critical, high, medium, low, info")
 
 	scanCmd.MarkFlagRequired("target")
 
@@ -43,8 +54,14 @@ func init() {
 }
 
 func runScan(cmd *cobra.Command, args []string) error {
-	fmt.Printf("aiscan v%s — All-in-one Security Scanner\n", version)
-	fmt.Printf("Scanning: %s\n\n", target)
+	if noColor {
+		color.NoColor = true
+	}
+
+	if !quiet {
+		fmt.Fprintf(os.Stderr, "aiscan v%s — All-in-one Security Scanner\n", version)
+		fmt.Fprintf(os.Stderr, "Scanning: %s\n\n", target)
+	}
 
 	scanners := buildScanners(layers)
 
@@ -53,24 +70,32 @@ func runScan(cmd *cobra.Command, args []string) error {
 		StartTime: time.Now(),
 	}
 
-	for _, s := range scanners {
-		if verbose {
-			fmt.Printf("[*] Running %s scan...\n", s.Name())
+	for _, sc := range scanners {
+		var s *spinner.Spinner
+		if !quiet {
+			s = spinner.New(spinner.CharSets[14], 100*time.Millisecond, spinner.WithWriter(os.Stderr))
+			s.Suffix = fmt.Sprintf(" Scanning %s layer...", sc.Name())
+			s.Start()
 		}
 
-		lr, err := s.Scan(target, timeout)
+		lr, err := sc.Scan(target, timeout)
+
+		if s != nil {
+			s.Stop()
+		}
+
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "[!] %s scan error: %v\n", s.Name(), err)
+			fmt.Fprintf(os.Stderr, "  [!] %s scan error: %v\n", sc.Name(), err)
 			result.Layers = append(result.Layers, scanner.LayerResult{
-				Layer:  s.Name(),
+				Layer:  sc.Name(),
 				Target: target,
 				Errors: []string{err.Error()},
 			})
 			continue
 		}
 
-		if verbose {
-			fmt.Printf("[+] %s scan complete: %d findings\n", s.Name(), len(lr.Findings))
+		if !quiet {
+			fmt.Fprintf(os.Stderr, "  [+] %s: %d findings\n", sc.Name(), len(lr.Findings))
 		}
 
 		result.Layers = append(result.Layers, *lr)
@@ -78,30 +103,109 @@ func runScan(cmd *cobra.Command, args []string) error {
 
 	result.EndTime = time.Now()
 
-	switch output {
+	// Apply severity filter if set
+	if severityFilter != "" {
+		filterFindings(result, severityFilter)
+	}
+
+	switch outputFormat {
 	case "json":
-		path := outputFile + ".json"
-		if err := report.WriteJSON(result, path); err != nil {
+		if outputFile == "" {
+			outputFile = "aiscan-report.json"
+		}
+		if err := report.WriteJSON(result, outputFile); err != nil {
 			return fmt.Errorf("write json report: %w", err)
 		}
-		fmt.Printf("\nReport written to %s\n", path)
+		fmt.Fprintf(os.Stderr, "\nReport written to %s\n", outputFile)
 	case "markdown":
-		path := outputFile + ".md"
-		if err := report.WriteMarkdown(result, path); err != nil {
+		if outputFile == "" {
+			outputFile = "aiscan-report.md"
+		}
+		if err := report.WriteMarkdown(result, outputFile); err != nil {
 			return fmt.Errorf("write markdown report: %w", err)
 		}
-		fmt.Printf("\nReport written to %s\n", path)
-	default:
+		fmt.Fprintf(os.Stderr, "\nReport written to %s\n", outputFile)
+	case "sarif":
+		if outputFile == "" {
+			outputFile = "aiscan-results.sarif"
+		}
+		if err := report.WriteSARIF(result, outputFile); err != nil {
+			return fmt.Errorf("write sarif report: %w", err)
+		}
+		fmt.Fprintf(os.Stderr, "\nReport written to %s\n", outputFile)
+	default: // terminal
 		report.PrintTerminal(result)
 	}
 
-	// Exit with code 1 if any CRITICAL or HIGH findings
-	counts := result.TotalFindings()
-	if counts[scanner.SeverityCritical] > 0 || counts[scanner.SeverityHigh] > 0 {
+	// Exit with code 1 based on --fail-on threshold
+	if shouldFail(result, failOn) {
 		os.Exit(1)
 	}
 
 	return nil
+}
+
+func shouldFail(result *scanner.ScanResult, failOn string) bool {
+	counts := result.TotalFindings()
+	switch strings.ToLower(failOn) {
+	case "critical":
+		return counts[scanner.SeverityCritical] > 0
+	case "high":
+		return counts[scanner.SeverityCritical]+counts[scanner.SeverityHigh] > 0
+	case "medium":
+		return counts[scanner.SeverityCritical]+counts[scanner.SeverityHigh]+counts[scanner.SeverityMedium] > 0
+	case "low":
+		return counts[scanner.SeverityCritical]+counts[scanner.SeverityHigh]+counts[scanner.SeverityMedium]+counts[scanner.SeverityLow] > 0
+	case "none":
+		return false
+	default:
+		return counts[scanner.SeverityCritical]+counts[scanner.SeverityHigh] > 0
+	}
+}
+
+func severityRank(s scanner.Severity) int {
+	switch s {
+	case scanner.SeverityCritical:
+		return 5
+	case scanner.SeverityHigh:
+		return 4
+	case scanner.SeverityMedium:
+		return 3
+	case scanner.SeverityLow:
+		return 2
+	case scanner.SeverityInfo:
+		return 1
+	default:
+		return 0
+	}
+}
+
+func filterFindings(result *scanner.ScanResult, minSeverity string) {
+	var threshold int
+	switch strings.ToLower(minSeverity) {
+	case "critical":
+		threshold = 5
+	case "high":
+		threshold = 4
+	case "medium":
+		threshold = 3
+	case "low":
+		threshold = 2
+	case "info":
+		threshold = 1
+	default:
+		return
+	}
+
+	for i, layer := range result.Layers {
+		var filtered []scanner.Finding
+		for _, f := range layer.Findings {
+			if severityRank(f.Severity) >= threshold {
+				filtered = append(filtered, f)
+			}
+		}
+		result.Layers[i].Findings = filtered
+	}
 }
 
 func buildScanners(layers []string) []scanner.Scanner {
