@@ -59,6 +59,10 @@ func (s *WebAppScanner) Scan(target string, timeoutSec int) (*scanner.LayerResul
 	s.checkTLS(parsed, timeoutSec, result)
 	s.checkHTTPResponse(client, target, result)
 	s.checkTRACE(client, target, result)
+	s.checkCORS(client, target, result)
+	s.checkHTTPSRedirect(client, target, result)
+	s.checkDirectoryListing(client, target, result)
+	s.checkInterestingPaths(client, target, result)
 
 	result.Duration = time.Since(start)
 	return result, nil
@@ -189,7 +193,8 @@ func (s *WebAppScanner) checkHTTPResponse(client *http.Client, target string, re
 
 // checkSecurityHeaders checks for missing security headers (A05:2021).
 func (s *WebAppScanner) checkSecurityHeaders(resp *http.Response, isHTTPS bool, result *scanner.LayerResult) {
-	if resp.Header.Get("Content-Security-Policy") == "" {
+	csp := resp.Header.Get("Content-Security-Policy")
+	if csp == "" {
 		result.Findings = append(result.Findings, scanner.Finding{
 			ID:          "WEB-001",
 			Layer:       "webapp",
@@ -200,6 +205,8 @@ func (s *WebAppScanner) checkSecurityHeaders(resp *http.Response, isHTTPS bool, 
 			Evidence:    "Content-Security-Policy header not found in response.",
 			Remediation: "Set a Content-Security-Policy header with a restrictive policy.",
 		})
+	} else {
+		s.analyzeCSPQuality(csp, result)
 	}
 
 	if isHTTPS && resp.Header.Get("Strict-Transport-Security") == "" {
