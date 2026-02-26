@@ -5,10 +5,18 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/fatih/color"
 	"github.com/onoz1169/aiscan/internal/scanner"
 )
+
+func formatDuration(d time.Duration) string {
+	if d < time.Second {
+		return fmt.Sprintf("%dms", d.Milliseconds())
+	}
+	return fmt.Sprintf("%.1fs", d.Seconds())
+}
 
 // SARIF 2.1.0 types
 
@@ -104,7 +112,7 @@ func PrintTerminal(result *scanner.ScanResult) {
 	fmt.Println(separator)
 	fmt.Println("  aiscan — Security Scan Report")
 	fmt.Printf("  Target: %s\n", result.Target)
-	fmt.Printf("  Duration: %.1fs\n", duration.Seconds())
+	fmt.Printf("  Duration: %s\n", formatDuration(duration))
 	fmt.Println(separator)
 
 	for _, layer := range result.Layers {
@@ -155,7 +163,7 @@ func WriteMarkdown(result *scanner.ScanResult, path string) error {
 	b.WriteString("# aiscan Security Report\n\n")
 	b.WriteString(fmt.Sprintf("**Target:** %s  \n", result.Target))
 	b.WriteString(fmt.Sprintf("**Scan Date:** %s  \n", result.StartTime.Format("2006-01-02")))
-	b.WriteString(fmt.Sprintf("**Duration:** %.1fs  \n\n", duration.Seconds()))
+	b.WriteString(fmt.Sprintf("**Duration:** %s  \n\n", formatDuration(duration)))
 
 	// Summary table
 	counts := result.TotalFindings()

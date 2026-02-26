@@ -452,7 +452,11 @@ func (s *NetworkScanner) Scan(target string, timeoutSec int) (*scanner.LayerResu
 			ok = true
 		}
 		if ok {
-			enricher := newNmapEnricher(nmapPath, s.nmapOpts.ExtraFlags, time.Duration(timeoutSec)*3*time.Second)
+			nmapTimeout := time.Duration(timeoutSec) * 3 * time.Second
+			if nmapTimeout < 60*time.Second {
+				nmapTimeout = 60 * time.Second
+			}
+			enricher := newNmapEnricher(nmapPath, s.nmapOpts.ExtraFlags, nmapTimeout)
 			ctx, cancel := context.WithTimeout(context.Background(), enricher.timeout)
 			defer cancel()
 			nmapFindings, err := enricher.Enrich(ctx, host, openPorts)

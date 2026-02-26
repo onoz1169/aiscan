@@ -66,8 +66,17 @@ func (e *nmapEnricher) Enrich(ctx context.Context, host string, openPorts []int)
 				p.Service.Name, p.Service.Product, p.Service.Version)
 
 			sev := scanner.SeverityInfo
+			title := fmt.Sprintf("Nmap: %s on port %d", p.Service.Name, p.ID)
+			description := fmt.Sprintf("Nmap detected %s %s %s on port %d/%s.", p.Service.Name, p.Service.Product, p.Service.Version, p.ID, p.Protocol)
+			remediation := "Review service versions for known vulnerabilities. Update outdated software."
+			ref := "nmap-sV"
+
 			if rp, ok := riskyPorts[int(p.ID)]; ok {
 				sev = rp.Severity
+				title = rp.Title + " [nmap-verified]"
+				description = rp.Description
+				remediation = rp.Remediation
+				ref = rp.Reference
 			}
 
 			// Append NSE script outputs
@@ -81,12 +90,12 @@ func (e *nmapEnricher) Enrich(ctx context.Context, host string, openPorts []int)
 			findings = append(findings, scanner.Finding{
 				ID:          fmt.Sprintf("NET-NMP-%d", p.ID),
 				Layer:       "network",
-				Title:       fmt.Sprintf("Nmap: %s on port %d", p.Service.Name, p.ID),
-				Description: fmt.Sprintf("Nmap detected %s %s %s on port %d/%s.", p.Service.Name, p.Service.Product, p.Service.Version, p.ID, p.Protocol),
+				Title:       title,
+				Description: description,
 				Severity:    sev,
-				Reference:   "nmap-sV",
+				Reference:   ref,
 				Evidence:    evidence,
-				Remediation: "Review service versions for known vulnerabilities. Update outdated software.",
+				Remediation: remediation,
 			})
 		}
 	}
