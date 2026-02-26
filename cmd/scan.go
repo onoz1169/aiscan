@@ -13,20 +13,27 @@ import (
 	"github.com/onoz1169/aiscan/internal/scanner/llm"
 	"github.com/onoz1169/aiscan/internal/scanner/network"
 	"github.com/onoz1169/aiscan/internal/scanner/webapp"
+	"github.com/onoz1169/aiscan/internal/toolcheck"
 	"github.com/spf13/cobra"
 )
 
 var (
-	target         string
-	layers         []string
-	outputFormat   string
-	outputFile     string
-	timeout        int
-	verbose        bool
-	failOn         string
-	quiet          bool
-	noColor        bool
-	severityFilter string
+	target          string
+	layers          []string
+	outputFormat    string
+	outputFile      string
+	timeout         int
+	verbose         bool
+	failOn          string
+	quiet           bool
+	noColor         bool
+	severityFilter  string
+	noNmap          bool
+	nmapPath        string
+	nmapFlags       string
+	noNuclei        bool
+	nucleiTemplates string
+	showTools       bool
 )
 
 var scanCmd = &cobra.Command{
@@ -48,12 +55,24 @@ func init() {
 	scanCmd.Flags().BoolVar(&noColor, "no-color", false, "Disable ANSI color output")
 	scanCmd.Flags().StringVarP(&severityFilter, "severity", "s", "", "Only show findings at or above: critical, high, medium, low, info")
 
+	scanCmd.Flags().BoolVar(&noNmap, "no-nmap", false, "Disable nmap enrichment even if installed")
+	scanCmd.Flags().StringVar(&nmapPath, "nmap-path", "", "Path to nmap binary (overrides PATH)")
+	scanCmd.Flags().StringVar(&nmapFlags, "nmap-flags", "", "Additional nmap flags")
+	scanCmd.Flags().BoolVar(&noNuclei, "no-nuclei", false, "Disable nuclei scan even if installed")
+	scanCmd.Flags().StringVar(&nucleiTemplates, "nuclei-templates", "", "Nuclei template categories (default: cves,misconfiguration,exposed-panels)")
+
 	scanCmd.MarkFlagRequired("target")
 
+	rootCmd.Flags().BoolVar(&showTools, "show-tools", false, "Show detected optional tools and exit")
 	rootCmd.AddCommand(scanCmd)
 }
 
 func runScan(cmd *cobra.Command, args []string) error {
+	if showTools {
+		printToolStatus()
+		return nil
+	}
+
 	if noColor {
 		color.NoColor = true
 	}
@@ -216,9 +235,16 @@ func buildScanners(layers []string) []scanner.Scanner {
 	for _, l := range layers {
 		switch l {
 		case "network":
-			scanners = append(scanners, network.New())
+			scanners = append(scanners, network.NewWithOptions(network.NmapOptions{
+				Disabled:   noNmap,
+				Path:       nmapPath,
+				ExtraFlags: nmapFlags,
+			}))
 		case "webapp":
-			scanners = append(scanners, webapp.New())
+			scanners = append(scanners, webapp.NewWithOptions(webapp.NucleiOptions{
+				Disabled:  noNuclei,
+				Templates: nucleiTemplates,
+			}))
 		case "llm":
 			scanners = append(scanners, llm.New())
 		default:
@@ -226,4 +252,23 @@ func buildScanners(layers []string) []scanner.Scanner {
 		}
 	}
 	return scanners
+}
+
+func printToolStatus() {
+	tools := []struct {
+		name    string
+		install string
+	}{
+		{"nmap", "brew install nmap  /  apt install nmap"},
+		{"nuclei", "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest"},
+	}
+	fmt.Println("Optional tools:")
+	for _, t := range tools {
+		path, ok := toolcheck.Available(t.name)
+		if ok {
+			fmt.Printf("  [+] %-12s %s\n", t.name, path)
+		} else {
+			fmt.Printf("  [-] %-12s not installed -- %s\n", t.name, t.install)
+		}
+	}
 }

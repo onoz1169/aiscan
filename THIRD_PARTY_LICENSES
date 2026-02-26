@@ -1,0 +1,19 @@
+Third-Party Licenses
+====================
+
+## github.com/Ullaakut/nmap
+
+Copyright (c) 2019 Ullaakut
+Apache License, Version 2.0
+https://github.com/Ullaakut/nmap/blob/master/LICENSE
+
+## garak payload data (NVIDIA)
+
+Portions of the LLM probe payloads in internal/scanner/llm/payloads/
+are derived from the garak project by NVIDIA.
+
+Copyright (c) 2023, NVIDIA Corporation
+Apache License, Version 2.0
+https://github.com/leondz/garak/blob/main/LICENSE
+
+Source: https://github.com/leondz/garak
