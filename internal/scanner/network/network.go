@@ -1,17 +1,20 @@
 package network
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/onoz1169/aiscan/internal/scanner"
+	"github.com/onoz1169/aiscan/internal/toolcheck"
 )
 
 type portInfo struct {
@@ -267,11 +270,24 @@ var httpPorts = map[int]bool{
 	10000: true,
 }
 
+// NmapOptions controls optional nmap enrichment during network scans.
+type NmapOptions struct {
+	Disabled   bool   // if true, skip nmap even if installed
+	Path       string // override PATH lookup (empty = auto)
+	ExtraFlags string // additional nmap flags
+}
+
 // NetworkScanner implements the Scanner interface for network-layer port scanning.
-type NetworkScanner struct{}
+type NetworkScanner struct {
+	nmapOpts NmapOptions
+}
 
 func New() *NetworkScanner {
 	return &NetworkScanner{}
+}
+
+func NewWithOptions(nmapOpts NmapOptions) *NetworkScanner {
+	return &NetworkScanner{nmapOpts: nmapOpts}
 }
 
 func (s *NetworkScanner) Name() string {
@@ -336,12 +352,15 @@ func (s *NetworkScanner) Scan(target string, timeoutSec int) (*scanner.LayerResu
 
 	var findings []scanner.Finding
 	var scanErrors []string
+	var openPorts []int
 	findingNum := 1
 
 	for _, r := range results {
 		if !r.open {
 			continue
 		}
+
+		openPorts = append(openPorts, r.port.Port)
 
 		// Identify service from banner fingerprinting
 		detectedService := identifyService(r.banner)
@@ -422,6 +441,28 @@ func (s *NetworkScanner) Scan(target string, timeoutSec int) (*scanner.LayerResu
 
 		if r.scanErr != "" {
 			scanErrors = append(scanErrors, r.scanErr)
+		}
+	}
+
+	// nmap enrichment phase
+	if !s.nmapOpts.Disabled && len(openPorts) > 0 {
+		nmapPath, ok := toolcheck.Available("nmap")
+		if s.nmapOpts.Path != "" {
+			nmapPath = s.nmapOpts.Path
+			ok = true
+		}
+		if ok {
+			enricher := newNmapEnricher(nmapPath, s.nmapOpts.ExtraFlags, time.Duration(timeoutSec)*3*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), enricher.timeout)
+			defer cancel()
+			nmapFindings, err := enricher.Enrich(ctx, host, openPorts)
+			if err != nil {
+				scanErrors = append(scanErrors, fmt.Sprintf("nmap enrichment: %v", err))
+			} else {
+				findings = append(findings, nmapFindings...)
+			}
+		} else {
+			fmt.Fprintf(os.Stderr, "  [i] nmap not found; install it for deeper service/version detection\n")
 		}
 	}
 
