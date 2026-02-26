@@ -11,13 +11,26 @@ import (
 	"time"
 
 	"github.com/onoz1169/aiscan/internal/scanner"
+	"github.com/onoz1169/aiscan/internal/toolcheck"
 )
 
+// NucleiOptions controls optional nuclei subprocess enrichment.
+type NucleiOptions struct {
+	Disabled  bool   // if true, skip nuclei even if installed
+	Templates string // comma-separated template categories (default: "cves,misconfiguration,exposed-panels")
+}
+
 // WebAppScanner checks web application security (OWASP Top 10 2021).
-type WebAppScanner struct{}
+type WebAppScanner struct {
+	nucleiOpts NucleiOptions
+}
 
 func New() *WebAppScanner {
 	return &WebAppScanner{}
+}
+
+func NewWithOptions(opts NucleiOptions) *WebAppScanner {
+	return &WebAppScanner{nucleiOpts: opts}
 }
 
 func (s *WebAppScanner) Name() string {
@@ -64,6 +77,24 @@ func (s *WebAppScanner) Scan(target string, timeoutSec int) (*scanner.LayerResul
 	s.checkHTTPSRedirect(client, target, result)
 	s.checkDirectoryListing(client, target, result)
 	s.checkInterestingPaths(client, target, result)
+
+	// nuclei enrichment (optional, if installed)
+	if !s.nucleiOpts.Disabled {
+		nucleiPath, ok := toolcheck.Available("nuclei")
+		if ok {
+			templates := s.nucleiOpts.Templates
+			if templates == "" {
+				templates = "cves,misconfiguration,exposed-panels"
+			}
+			enricher := newNucleiEnricher(nucleiPath, templates, time.Duration(timeoutSec)*time.Second*5)
+			nucleiFindings, err := enricher.Enrich(target)
+			if err != nil {
+				result.Errors = append(result.Errors, fmt.Sprintf("nuclei: %v", err))
+			} else {
+				result.Findings = append(result.Findings, nucleiFindings...)
+			}
+		}
+	}
 
 	result.Duration = time.Since(start)
 	return result, nil
