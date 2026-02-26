@@ -9,7 +9,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/onoz1169/aiscan/internal/scanner"
+	"github.com/onoz1169/1scan/internal/scanner"
 )
 
 // checkCORS sends a request with a forged Origin header and inspects CORS response headers (A05:2021).

@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/onoz1169/aiscan/internal/scanner"
-	"github.com/onoz1169/aiscan/internal/toolcheck"
-	"github.com/onoz1169/aiscan/internal/virustotal"
+	"github.com/onoz1169/1scan/internal/scanner"
+	"github.com/onoz1169/1scan/internal/toolcheck"
+	"github.com/onoz1169/1scan/internal/virustotal"
 )
 
 // NucleiOptions controls optional nuclei subprocess enrichment.

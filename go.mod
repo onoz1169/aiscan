@@ -1,4 +1,4 @@
-module github.com/onoz1169/aiscan
+module github.com/onoz1169/1scan
 
 go 1.23.4
 

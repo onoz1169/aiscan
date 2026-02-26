@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/fatih/color"
-	"github.com/onoz1169/aiscan/internal/scanner"
+	"github.com/onoz1169/1scan/internal/scanner"
 )
 
 func formatDuration(d time.Duration) string {
@@ -457,7 +457,7 @@ func WriteSARIF(result *scanner.ScanResult, path string) error {
 					Driver: sarifDriver{
 						Name:           "aiscan",
 						Version:        "0.1.0",
-						InformationURI: "https://github.com/onoz1169/aiscan",
+						InformationURI: "https://github.com/onoz1169/1scan",
 						Rules:          rules,
 					},
 				},

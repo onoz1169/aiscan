@@ -8,15 +8,15 @@ import (
 
 	"github.com/briandowns/spinner"
 	"github.com/fatih/color"
-	"github.com/onoz1169/aiscan/internal/abuseipdb"
-	"github.com/onoz1169/aiscan/internal/cve"
-	"github.com/onoz1169/aiscan/internal/report"
-	"github.com/onoz1169/aiscan/internal/scanner"
-	"github.com/onoz1169/aiscan/internal/scanner/llm"
-	"github.com/onoz1169/aiscan/internal/scanner/network"
-	"github.com/onoz1169/aiscan/internal/scanner/webapp"
-	"github.com/onoz1169/aiscan/internal/toolcheck"
-	"github.com/onoz1169/aiscan/internal/virustotal"
+	"github.com/onoz1169/1scan/internal/abuseipdb"
+	"github.com/onoz1169/1scan/internal/cve"
+	"github.com/onoz1169/1scan/internal/report"
+	"github.com/onoz1169/1scan/internal/scanner"
+	"github.com/onoz1169/1scan/internal/scanner/llm"
+	"github.com/onoz1169/1scan/internal/scanner/network"
+	"github.com/onoz1169/1scan/internal/scanner/webapp"
+	"github.com/onoz1169/1scan/internal/toolcheck"
+	"github.com/onoz1169/1scan/internal/virustotal"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
@@ -172,10 +172,10 @@ func runScan(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Load config file: explicit --config, then auto-detect .aiscan.yaml
+	// Load config file: explicit --config, then auto-detect .1scan.yaml
 	cfgPath := configFile
 	if cfgPath == "" {
-		for _, candidate := range []string{".aiscan.yaml", ".aiscan.yml", "aiscan.yaml"} {
+		for _, candidate := range []string{".1scan.yaml", ".1scan.yml", "1scan.yaml"} {
 			if _, err := os.Stat(candidate); err == nil {
 				cfgPath = candidate
 				break
@@ -197,7 +197,7 @@ func runScan(cmd *cobra.Command, args []string) error {
 	}
 
 	if !quiet {
-		fmt.Fprintf(os.Stderr, "aiscan v%s — All-in-one Security Scanner\n", version)
+		fmt.Fprintf(os.Stderr, "1scan v%s — All-in-one Security Scanner\n", version)
 		fmt.Fprintf(os.Stderr, "Scanning: %s\n\n", target)
 	}
 
@@ -328,10 +328,10 @@ type fileReportSpec struct {
 }
 
 var fileReports = map[string]fileReportSpec{
-	"json":     {"aiscan-report.json", report.WriteJSON},
-	"markdown": {"aiscan-report.md", report.WriteMarkdown},
-	"sarif":    {"aiscan-results.sarif", report.WriteSARIF},
-	"html":     {"aiscan-report.html", report.WriteHTML},
+	"json":     {"1scan-report.json", report.WriteJSON},
+	"markdown": {"1scan-report.md", report.WriteMarkdown},
+	"sarif":    {"1scan-results.sarif", report.WriteSARIF},
+	"html":     {"1scan-report.html", report.WriteHTML},
 }
 
 func writeReport(result *scanner.ScanResult, format, outFile string) error {

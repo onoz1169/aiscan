@@ -7,9 +7,9 @@ import (
 	"time"
 
 	nmap "github.com/Ullaakut/nmap/v3"
-	"github.com/onoz1169/aiscan/internal/cve"
-	"github.com/onoz1169/aiscan/internal/osv"
-	"github.com/onoz1169/aiscan/internal/scanner"
+	"github.com/onoz1169/1scan/internal/cve"
+	"github.com/onoz1169/1scan/internal/osv"
+	"github.com/onoz1169/1scan/internal/scanner"
 )
 
 // nmapEnricher runs nmap service/version detection on already-discovered open ports.

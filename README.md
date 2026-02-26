@@ -1,9 +1,9 @@
-# aiscan
+# 1scan
 
 **All-in-one security scanner: Network × Web App × LLM — one command, one report.**
 
 ```
-aiscan scan -t https://api.example.com
+1scan scan -t https://api.example.com
 ```
 
 ---
@@ -20,17 +20,17 @@ Modern AI-powered applications have three distinct attack surfaces that today's 
 
 **No single OSS tool covers all three.** Security teams run three separate scanners, get three separate reports, and miss the picture: a misconfigured CORS policy on the same server running an unprotected LLM endpoint is a critical chain, not two independent findings.
 
-aiscan runs all three layers in one command and produces one unified report.
+1scan runs all three layers in one command and produces one unified report.
 
 ```
-aiscan scan -t https://api.example.com
+1scan scan -t https://api.example.com
 
   [/] Scanning network layer...   [+] network: 4 findings
   [/] Scanning webapp layer...    [+] webapp: 7 findings
   [/] Scanning llm layer...       [+] llm: 2 findings
 
   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    aiscan — Security Scan Report
+    1scan — Security Scan Report
     Target: https://api.example.com
     Duration: 8.4s
   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -58,16 +58,16 @@ aiscan scan -t https://api.example.com
 **From source (requires Go 1.21+):**
 
 ```bash
-git clone https://github.com/onoz1169/aiscan
-cd aiscan
-go build -o aiscan .
-./aiscan --version
+git clone https://github.com/onoz1169/1scan
+cd 1scan
+go build -o 1scan .
+./1scan --version
 ```
 
 **Go install:**
 
 ```bash
-go install github.com/onoz1169/aiscan@latest
+go install github.com/onoz1169/1scan@latest
 ```
 
 ---
@@ -77,64 +77,64 @@ go install github.com/onoz1169/aiscan@latest
 ### Basic scan (all three layers)
 
 ```bash
-aiscan scan -t https://example.com
+1scan scan -t https://example.com
 ```
 
 ### Specific layers only
 
 ```bash
 # Network only
-aiscan scan -t example.com -l network
+1scan scan -t example.com -l network
 
 # Web app + LLM (skip network)
-aiscan scan -t https://api.example.com -l webapp,llm
+1scan scan -t https://api.example.com -l webapp,llm
 
 # LLM endpoint only (Ollama, OpenAI-compatible, Anthropic, HF TGI)
-aiscan scan -t http://localhost:11434 -l llm
+1scan scan -t http://localhost:11434 -l llm
 ```
 
 ### Output formats
 
 ```bash
 # JSON report
-aiscan scan -t https://example.com -F json -o report.json
+1scan scan -t https://example.com -F json -o report.json
 
 # Markdown report
-aiscan scan -t https://example.com -F markdown -o report.md
+1scan scan -t https://example.com -F markdown -o report.md
 
 # SARIF (for GitHub Code Scanning)
-aiscan scan -t https://example.com -F sarif -o results.sarif
+1scan scan -t https://example.com -F sarif -o results.sarif
 
 # HTML report (self-contained, shareable)
-aiscan scan -t https://example.com -F html -o report.html
+1scan scan -t https://example.com -F html -o report.html
 ```
 
 ### CI/CD usage
 
 ```bash
 # Fail build if any HIGH or CRITICAL finding (default)
-aiscan scan -t https://staging.example.com --fail-on high
+1scan scan -t https://staging.example.com --fail-on high
 
 # Fail only on CRITICAL
-aiscan scan -t https://staging.example.com --fail-on critical
+1scan scan -t https://staging.example.com --fail-on critical
 
 # Report mode: never fail, just output
-aiscan scan -t https://staging.example.com --fail-on none -F sarif -o results.sarif
+1scan scan -t https://staging.example.com --fail-on none -F sarif -o results.sarif
 ```
 
 ### GitHub Actions
 
 ```yaml
-- name: Run aiscan
+- name: Run 1scan
   run: |
-    go install github.com/onoz1169/aiscan@latest
-    aiscan scan -t ${{ env.TARGET_URL }} -F sarif -o aiscan-results.sarif --fail-on none
+    go install github.com/onoz1169/1scan@latest
+    1scan scan -t ${{ env.TARGET_URL }} -F sarif -o 1scan-results.sarif --fail-on none
 
 - name: Upload to GitHub Code Scanning
   uses: github/codeql-action/upload-sarif@v3
   with:
-    sarif_file: aiscan-results.sarif
-    category: aiscan
+    sarif_file: 1scan-results.sarif
+    category: 1scan
 ```
 
 ---
@@ -211,7 +211,7 @@ Multi-signal heuristics for each probe: compliance phrase detection, instruction
 ## All flags
 
 ```
-aiscan scan [flags]
+1scan scan [flags]
 
   -t, --target string     Target URL or hostname (required)
   -l, --layers strings    Layers to run: network, webapp, llm (default: all three)
@@ -223,6 +223,9 @@ aiscan scan [flags]
       --no-color          Disable ANSI colors
       --timeout int       Timeout per scan in seconds (default: 10)
   -v, --verbose           Verbose output
+      --cve-lookup        Enrich nmap findings with NVD CVE data
+      --nvd-api-key string NVD API key for CVE lookups (or set NVD_API_KEY env var)
+      --config string     Path to YAML config file (CLI flags override config)
 ```
 
 **Exit codes:**
@@ -237,11 +240,11 @@ aiscan scan [flags]
 
 ## Philosophy
 
-aiscan is built on a simple belief: **security knowledge should not require a security team.**
+1scan is built on a simple belief: **security knowledge should not require a security team.**
 
-Most developers don't know to run a port scanner, a web scanner, and an LLM red-teaming framework separately — and stitch the results together manually. aiscan is the tool that does all of it in one command, designed to be run by anyone who can type a URL.
+Most developers don't know to run a port scanner, a web scanner, and an LLM red-teaming framework separately — and stitch the results together manually. 1scan is the tool that does all of it in one command, designed to be run by anyone who can type a URL.
 
-The tool is also a response to the AI ecosystem's security blind spot. As LLM APIs become infrastructure — embedded in APIs, CI pipelines, and internal tools — the attack surface grows invisibly. aiscan treats LLM endpoints as first-class infrastructure to be scanned, not as a special case.
+The tool is also a response to the AI ecosystem's security blind spot. As LLM APIs become infrastructure — embedded in APIs, CI pipelines, and internal tools — the attack surface grows invisibly. 1scan treats LLM endpoints as first-class infrastructure to be scanned, not as a special case.
 
 Built by a security engineer who spent years breaking into systems, and now builds tools designed to survive it.
 

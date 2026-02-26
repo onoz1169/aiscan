@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/onoz1169/aiscan/internal/scanner"
+	"github.com/onoz1169/1scan/internal/scanner"
 )
 
 // NucleiEnricher runs nuclei as an optional subprocess and parses JSONL output.

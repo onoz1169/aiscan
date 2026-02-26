@@ -10,9 +10,9 @@ import (
 const version = "0.1.0"
 
 var rootCmd = &cobra.Command{
-	Use:     "aiscan",
-	Short:   "All-in-one security scanner: Network + Web App + LLM",
-	Long:    `aiscan is a 3-layer security scanner that covers Network (port scan), Web App (OWASP Top 10), and LLM (OWASP LLM Top 10) attack surfaces in a single CLI run.`,
+	Use:     "1scan",
+	Short:   "1 scan. 3 layers. Network + Web App + LLM.",
+	Long:    `1scan covers Network (port scan), Web App (OWASP Top 10), and LLM (OWASP LLM Top 10) attack surfaces in a single CLI run.`,
 	Version: version,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if showTools {
