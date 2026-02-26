@@ -8,6 +8,7 @@ import (
 
 	"github.com/briandowns/spinner"
 	"github.com/fatih/color"
+	"github.com/onoz1169/aiscan/internal/abuseipdb"
 	"github.com/onoz1169/aiscan/internal/cve"
 	"github.com/onoz1169/aiscan/internal/report"
 	"github.com/onoz1169/aiscan/internal/scanner"
@@ -15,6 +16,7 @@ import (
 	"github.com/onoz1169/aiscan/internal/scanner/network"
 	"github.com/onoz1169/aiscan/internal/scanner/webapp"
 	"github.com/onoz1169/aiscan/internal/toolcheck"
+	"github.com/onoz1169/aiscan/internal/virustotal"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
@@ -39,6 +41,9 @@ var (
 	configFile      string
 	cveLookup       bool
 	nvdAPIKey       string
+	noShodan        bool
+	abuseipdbKey    string
+	vtAPIKey        string
 )
 
 // ScanConfig mirrors the CLI flags for YAML config file support.
@@ -55,6 +60,9 @@ type ScanConfig struct {
 	NmapFlags       string   `yaml:"nmap-flags"`
 	NoNuclei        bool     `yaml:"no-nuclei"`
 	NucleiTemplates string   `yaml:"nuclei-templates"`
+	NoShodan        bool     `yaml:"no-shodan"`
+	AbuseIPDBKey    string   `yaml:"abuseipdb-key"`
+	VTAPIKey        string   `yaml:"vt-api-key"`
 }
 
 // applyConfig reads a YAML config file and applies values for flags not explicitly
@@ -111,6 +119,15 @@ func applyConfig(cmd *cobra.Command, cfgPath string) error {
 	if cfg.NucleiTemplates != "" {
 		setIfUnset("nuclei-templates", func() { nucleiTemplates = cfg.NucleiTemplates })
 	}
+	if cfg.NoShodan {
+		setIfUnset("no-shodan", func() { noShodan = true })
+	}
+	if cfg.AbuseIPDBKey != "" {
+		setIfUnset("abuseipdb-key", func() { abuseipdbKey = cfg.AbuseIPDBKey })
+	}
+	if cfg.VTAPIKey != "" {
+		setIfUnset("vt-api-key", func() { vtAPIKey = cfg.VTAPIKey })
+	}
 	return nil
 }
 
@@ -141,6 +158,9 @@ func init() {
 	scanCmd.Flags().StringVar(&configFile, "config", "", "Path to YAML config file (CLI flags override config)")
 	scanCmd.Flags().BoolVar(&cveLookup, "cve-lookup", false, "Enrich nmap findings with NVD CVE data (requires --nvd-api-key or NVD_API_KEY env)")
 	scanCmd.Flags().StringVar(&nvdAPIKey, "nvd-api-key", "", "NVD API key for CVE lookups (or set NVD_API_KEY env var)")
+	scanCmd.Flags().BoolVar(&noShodan, "no-shodan", false, "Disable Shodan InternetDB enrichment")
+	scanCmd.Flags().StringVar(&abuseipdbKey, "abuseipdb-key", "", "AbuseIPDB API key for IP reputation checks (or set ABUSEIPDB_API_KEY env var)")
+	scanCmd.Flags().StringVar(&vtAPIKey, "vt-api-key", "", "VirusTotal API key for URL reputation checks (or set VT_API_KEY env var)")
 
 	rootCmd.Flags().BoolVar(&showTools, "show-tools", false, "Show detected optional tools and exit")
 	rootCmd.AddCommand(scanCmd)
@@ -332,32 +352,61 @@ func writeReport(result *scanner.ScanResult, format, outFile string) error {
 
 func buildScanners(layers []string) []scanner.Scanner {
 	// Resolve NVD API key: flag > env var
-	apiKey := nvdAPIKey
-	if apiKey == "" {
-		apiKey = os.Getenv("NVD_API_KEY")
+	nvdKey := nvdAPIKey
+	if nvdKey == "" {
+		nvdKey = os.Getenv("NVD_API_KEY")
 	}
 	var cveClient *cve.Client
-	if cveLookup && apiKey != "" {
-		cveClient = cve.New(apiKey)
-	} else if cveLookup && apiKey == "" {
+	if cveLookup && nvdKey != "" {
+		cveClient = cve.New(nvdKey)
+	} else if cveLookup && nvdKey == "" {
 		fmt.Fprintln(os.Stderr, "  [!] --cve-lookup requires --nvd-api-key or NVD_API_KEY env var; skipping CVE lookup")
+	}
+
+	// Resolve AbuseIPDB key: flag > env var
+	abuseKey := abuseipdbKey
+	if abuseKey == "" {
+		abuseKey = os.Getenv("ABUSEIPDB_API_KEY")
+	}
+	var abuseClient *abuseipdb.Client
+	if abuseKey != "" {
+		abuseClient = abuseipdb.New(abuseKey)
+	}
+
+	// Resolve VirusTotal key: flag > env var
+	vtKey := vtAPIKey
+	if vtKey == "" {
+		vtKey = os.Getenv("VT_API_KEY")
+	}
+	var vtClient *virustotal.Client
+	if vtKey != "" {
+		vtClient = virustotal.New(vtKey)
 	}
 
 	var scanners []scanner.Scanner
 	for _, l := range layers {
 		switch l {
 		case "network":
-			scanners = append(scanners, network.NewWithOptions(network.NmapOptions{
-				Disabled:   noNmap,
-				Path:       nmapPath,
-				ExtraFlags: nmapFlags,
-				CVEClient:  cveClient,
-			}))
+			scanners = append(scanners, network.NewWithOptions(
+				network.NmapOptions{
+					Disabled:   noNmap,
+					Path:       nmapPath,
+					ExtraFlags: nmapFlags,
+					CVEClient:  cveClient,
+				},
+				network.NetworkEnrichmentOptions{
+					ShodanEnabled: !noShodan,
+					AbuseIPDB:     abuseClient,
+				},
+			))
 		case "webapp":
-			scanners = append(scanners, webapp.NewWithOptions(webapp.NucleiOptions{
-				Disabled:  noNuclei,
-				Templates: nucleiTemplates,
-			}))
+			scanners = append(scanners, webapp.NewWithVT(
+				webapp.NucleiOptions{
+					Disabled:  noNuclei,
+					Templates: nucleiTemplates,
+				},
+				vtClient,
+			))
 		case "llm":
 			scanners = append(scanners, llm.New())
 		default:

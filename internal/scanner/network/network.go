@@ -13,8 +13,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/onoz1169/aiscan/internal/abuseipdb"
 	"github.com/onoz1169/aiscan/internal/cve"
 	"github.com/onoz1169/aiscan/internal/scanner"
+	"github.com/onoz1169/aiscan/internal/shodan"
 	"github.com/onoz1169/aiscan/internal/toolcheck"
 )
 
@@ -273,23 +275,30 @@ var httpPorts = map[int]bool{
 
 // NmapOptions controls optional nmap enrichment during network scans.
 type NmapOptions struct {
-	Disabled   bool   // if true, skip nmap even if installed
-	Path       string // override PATH lookup (empty = auto)
-	ExtraFlags string // additional nmap flags
+	Disabled   bool        // if true, skip nmap even if installed
+	Path       string      // override PATH lookup (empty = auto)
+	ExtraFlags string      // additional nmap flags
 	CVEClient  *cve.Client // nil = CVE lookup disabled
+}
+
+// NetworkEnrichmentOptions controls optional external API enrichments.
+type NetworkEnrichmentOptions struct {
+	ShodanEnabled  bool              // default true; queries Shodan InternetDB (no key)
+	AbuseIPDB      *abuseipdb.Client // nil = skip AbuseIPDB
 }
 
 // NetworkScanner implements the Scanner interface for network-layer port scanning.
 type NetworkScanner struct {
-	nmapOpts NmapOptions
+	nmapOpts    NmapOptions
+	enrichOpts  NetworkEnrichmentOptions
 }
 
 func New() *NetworkScanner {
-	return &NetworkScanner{}
+	return &NetworkScanner{enrichOpts: NetworkEnrichmentOptions{ShodanEnabled: true}}
 }
 
-func NewWithOptions(nmapOpts NmapOptions) *NetworkScanner {
-	return &NetworkScanner{nmapOpts: nmapOpts}
+func NewWithOptions(nmapOpts NmapOptions, enrichOpts NetworkEnrichmentOptions) *NetworkScanner {
+	return &NetworkScanner{nmapOpts: nmapOpts, enrichOpts: enrichOpts}
 }
 
 func (s *NetworkScanner) Name() string {
@@ -469,6 +478,28 @@ func (s *NetworkScanner) Scan(target string, timeoutSec int) (*scanner.LayerResu
 			}
 		} else {
 			fmt.Fprintf(os.Stderr, "  [i] nmap not found; install it for deeper service/version detection\n")
+		}
+	}
+
+	// Shodan InternetDB enrichment (no key, external perspective)
+	if s.enrichOpts.ShodanEnabled {
+		ip := resolveIP(host)
+		if ip != "" {
+			shodanFindings, shodanErrs := enrichShodan(ip, findingNum)
+			findings = append(findings, shodanFindings...)
+			findingNum += len(shodanFindings)
+			scanErrors = append(scanErrors, shodanErrs...)
+		}
+	}
+
+	// AbuseIPDB enrichment (optional, requires API key)
+	if s.enrichOpts.AbuseIPDB != nil {
+		ip := resolveIP(host)
+		if ip != "" {
+			abuseFindings, abuseErrs := enrichAbuseIPDB(s.enrichOpts.AbuseIPDB, ip, findingNum)
+			findings = append(findings, abuseFindings...)
+			findingNum += len(abuseFindings)
+			scanErrors = append(scanErrors, abuseErrs...)
 		}
 	}
 
@@ -802,4 +833,111 @@ func sanitizeBanner(banner string) string {
 		s = s[:128] + "..."
 	}
 	return s
+}
+
+// resolveIP resolves a hostname to its first IP address.
+// Returns the input unchanged if it is already a valid IP.
+func resolveIP(host string) string {
+	if net.ParseIP(host) != nil {
+		return host
+	}
+	addrs, err := net.LookupHost(host)
+	if err != nil || len(addrs) == 0 {
+		return ""
+	}
+	return addrs[0]
+}
+
+// enrichShodan queries Shodan InternetDB for external perspective data on the given IP.
+func enrichShodan(ip string, startIdx int) ([]scanner.Finding, []string) {
+	result, err := shodan.QueryInternetDB(ip)
+	if err != nil {
+		return nil, []string{fmt.Sprintf("shodan internetdb: %v", err)}
+	}
+	if result == nil {
+		return nil, nil // IP not in Shodan database
+	}
+
+	var findings []scanner.Finding
+	findingNum := startIdx
+
+	if len(result.Vulns) > 0 {
+		cveList := strings.Join(result.Vulns, ", ")
+		findings = append(findings, scanner.Finding{
+			ID:          fmt.Sprintf("NET-%03d", findingNum),
+			Layer:       "network",
+			Title:       fmt.Sprintf("Shodan: %d known CVE(s) associated with %s", len(result.Vulns), ip),
+			Description: fmt.Sprintf("Shodan InternetDB reports CVEs associated with this IP: %s", cveList),
+			Severity:    scanner.SeverityHigh,
+			Reference:   "https://internetdb.shodan.io/" + ip,
+			Evidence:    fmt.Sprintf("IP: %s | CVEs: %s | CPEs: %s", ip, cveList, strings.Join(result.CPEs, ", ")),
+			Remediation: "Review and patch the reported CVEs. Update software to the latest versions.",
+		})
+		findingNum++
+	}
+
+	if len(result.Ports) > 0 {
+		portStrs := make([]string, len(result.Ports))
+		for i, p := range result.Ports {
+			portStrs[i] = fmt.Sprintf("%d", p)
+		}
+		evidence := fmt.Sprintf("External ports: %s", strings.Join(portStrs, ", "))
+		if len(result.Hostnames) > 0 {
+			evidence += fmt.Sprintf(" | Hostnames: %s", strings.Join(result.Hostnames, ", "))
+		}
+		if len(result.Tags) > 0 {
+			evidence += fmt.Sprintf(" | Tags: %s", strings.Join(result.Tags, ", "))
+		}
+		findings = append(findings, scanner.Finding{
+			ID:          fmt.Sprintf("NET-%03d", findingNum),
+			Layer:       "network",
+			Title:       fmt.Sprintf("Shodan: %d port(s) externally visible on %s", len(result.Ports), ip),
+			Description: fmt.Sprintf("Shodan reports the following ports as externally visible: %s. This is the attacker's view of the target.", strings.Join(portStrs, ", ")),
+			Severity:    scanner.SeverityInfo,
+			Reference:   "https://internetdb.shodan.io/" + ip,
+			Evidence:    evidence,
+			Remediation: "Close unnecessary ports and restrict access via firewall rules.",
+		})
+	}
+
+	return findings, nil
+}
+
+// enrichAbuseIPDB queries AbuseIPDB for IP reputation data.
+func enrichAbuseIPDB(client *abuseipdb.Client, ip string, startIdx int) ([]scanner.Finding, []string) {
+	check, err := client.Check(ip, 90)
+	if err != nil {
+		return nil, []string{fmt.Sprintf("abuseipdb: %v", err)}
+	}
+	if check == nil || (check.AbuseConfidenceScore == 0 && check.TotalReports == 0) {
+		return nil, nil // clean IP
+	}
+
+	sev := scanner.SeverityLow
+	switch {
+	case check.AbuseConfidenceScore >= 75:
+		sev = scanner.SeverityCritical
+	case check.AbuseConfidenceScore >= 50:
+		sev = scanner.SeverityHigh
+	case check.AbuseConfidenceScore >= 25:
+		sev = scanner.SeverityMedium
+	}
+
+	evidence := fmt.Sprintf("IP: %s | Confidence: %d%% | Reports: %d from %d users | ISP: %s | Country: %s",
+		ip, check.AbuseConfidenceScore, check.TotalReports, check.NumDistinctUsers, check.ISP, check.CountryCode)
+	if check.LastReportedAt != "" {
+		evidence += fmt.Sprintf(" | Last reported: %s", check.LastReportedAt)
+	}
+
+	findings := []scanner.Finding{{
+		ID:          fmt.Sprintf("NET-%03d", startIdx),
+		Layer:       "network",
+		Title:       fmt.Sprintf("AbuseIPDB: %s has %d%% abuse confidence score", ip, check.AbuseConfidenceScore),
+		Description: fmt.Sprintf("AbuseIPDB reports this IP with an abuse confidence score of %d%% based on %d reports from %d distinct users in the last 90 days.", check.AbuseConfidenceScore, check.TotalReports, check.NumDistinctUsers),
+		Severity:    sev,
+		Reference:   "https://www.abuseipdb.com/check/" + ip,
+		Evidence:    evidence,
+		Remediation: "Consider blocking or rate-limiting traffic from this IP. Review firewall and access logs.",
+	}}
+	return findings, nil
 }

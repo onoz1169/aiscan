@@ -12,6 +12,7 @@ import (
 
 	"github.com/onoz1169/aiscan/internal/scanner"
 	"github.com/onoz1169/aiscan/internal/toolcheck"
+	"github.com/onoz1169/aiscan/internal/virustotal"
 )
 
 // NucleiOptions controls optional nuclei subprocess enrichment.
@@ -23,6 +24,7 @@ type NucleiOptions struct {
 // WebAppScanner checks web application security (OWASP Top 10 2021).
 type WebAppScanner struct {
 	nucleiOpts NucleiOptions
+	vtClient   *virustotal.Client // nil = VT check disabled
 }
 
 func New() *WebAppScanner {
@@ -31,6 +33,11 @@ func New() *WebAppScanner {
 
 func NewWithOptions(opts NucleiOptions) *WebAppScanner {
 	return &WebAppScanner{nucleiOpts: opts}
+}
+
+// NewWithVT creates a WebAppScanner with nuclei and VirusTotal options.
+func NewWithVT(nucleiOpts NucleiOptions, vtClient *virustotal.Client) *WebAppScanner {
+	return &WebAppScanner{nucleiOpts: nucleiOpts, vtClient: vtClient}
 }
 
 func (s *WebAppScanner) Name() string {
@@ -77,6 +84,11 @@ func (s *WebAppScanner) Scan(target string, timeoutSec int) (*scanner.LayerResul
 	s.checkHTTPSRedirect(client, target, result)
 	s.checkDirectoryListing(client, target, result)
 	s.checkInterestingPaths(client, target, result)
+
+	// VirusTotal URL reputation check (optional, requires API key)
+	if s.vtClient != nil {
+		s.checkVirusTotal(target, result)
+	}
 
 	// nuclei enrichment (optional, if installed)
 	if !s.nucleiOpts.Disabled {
@@ -444,5 +456,44 @@ func (s *WebAppScanner) checkTRACE(client *http.Client, target string, result *s
 			Remediation: "Disable the TRACE HTTP method on the web server.",
 		})
 	}
+}
+
+// checkVirusTotal checks the target URL's reputation via VirusTotal.
+func (s *WebAppScanner) checkVirusTotal(target string, result *scanner.LayerResult) {
+	report, err := s.vtClient.CheckURL(target)
+	if err != nil {
+		result.Errors = append(result.Errors, fmt.Sprintf("virustotal: %v", err))
+		return
+	}
+	if report == nil {
+		return // URL not yet in VT database
+	}
+
+	stats := report.Stats
+	total := stats.Malicious + stats.Suspicious + stats.Harmless + stats.Undetected
+	if stats.Malicious == 0 && stats.Suspicious == 0 {
+		return // clean
+	}
+
+	sev := scanner.SeverityMedium
+	if stats.Malicious >= 5 {
+		sev = scanner.SeverityCritical
+	} else if stats.Malicious >= 2 {
+		sev = scanner.SeverityHigh
+	}
+
+	evidence := fmt.Sprintf("VirusTotal: %d/%d engines flagged | malicious=%d suspicious=%d harmless=%d | reputation=%d",
+		stats.Malicious+stats.Suspicious, total, stats.Malicious, stats.Suspicious, stats.Harmless, report.Reputation)
+
+	result.Findings = append(result.Findings, scanner.Finding{
+		ID:          "WEB-VT-001",
+		Layer:       "webapp",
+		Title:       fmt.Sprintf("VirusTotal: URL flagged by %d security engines", stats.Malicious+stats.Suspicious),
+		Description: fmt.Sprintf("VirusTotal reports this URL as malicious or suspicious by %d out of %d security engines.", stats.Malicious+stats.Suspicious, total),
+		Severity:    sev,
+		Reference:   "https://www.virustotal.com/gui/url/" + target,
+		Evidence:    evidence,
+		Remediation: "Investigate whether the URL hosts malware or phishing content. Review server content and request VT re-analysis after remediation.",
+	})
 }
 

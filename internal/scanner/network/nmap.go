@@ -8,6 +8,7 @@ import (
 
 	nmap "github.com/Ullaakut/nmap/v3"
 	"github.com/onoz1169/aiscan/internal/cve"
+	"github.com/onoz1169/aiscan/internal/osv"
 	"github.com/onoz1169/aiscan/internal/scanner"
 )
 
@@ -101,7 +102,7 @@ func (e *nmapEnricher) Enrich(ctx context.Context, host string, openPorts []int)
 				Remediation: remediation,
 			})
 
-			// CVE lookup: only when version info is available
+			// CVE lookup via NVD (requires API key, fuzzy keyword search)
 			if e.cveClient != nil && p.Service.Product != "" && p.Service.Version != "" {
 				cveResults, err := e.cveClient.Lookup(p.Service.Product, p.Service.Version, 3, 4.0)
 				if err == nil {
@@ -116,6 +117,34 @@ func (e *nmapEnricher) Enrich(ctx context.Context, host string, openPorts []int)
 							Reference:   c.URL,
 							Evidence:    fmt.Sprintf("CVSS %.1f (%s) — detected on port %d/%s", c.Score, c.Severity, p.ID, p.Protocol),
 							Remediation: fmt.Sprintf("Update %s to a patched version. See %s", p.Service.Product, c.URL),
+						})
+					}
+				}
+			}
+
+			// OSV lookup: structured version-range matching (no API key required)
+			if p.Service.Product != "" {
+				osvVulns, err := osv.Query(p.Service.Product, p.Service.Version)
+				if err == nil {
+					for _, v := range osvVulns {
+						osvSev := cveSeverity(v.Score)
+						desc := v.Summary
+						if len(v.Aliases) > 0 {
+							desc = fmt.Sprintf("[%s] %s", strings.Join(v.Aliases, ", "), desc)
+						}
+						remediation := "Update to a patched version."
+						if v.Fixed != "" {
+							remediation = fmt.Sprintf("Update %s to version %s or later.", p.Service.Product, v.Fixed)
+						}
+						findings = append(findings, scanner.Finding{
+							ID:          fmt.Sprintf("NET-OSV-%s", v.ID),
+							Layer:       "network",
+							Title:       fmt.Sprintf("%s in %s %s", v.ID, p.Service.Product, p.Service.Version),
+							Description: truncateDesc(desc, 300),
+							Severity:    osvSev,
+							Reference:   "https://osv.dev/vulnerability/" + v.ID,
+							Evidence:    fmt.Sprintf("CVSS %.1f (%s) — detected on port %d/%s", v.Score, v.Severity, p.ID, p.Protocol),
+							Remediation: remediation,
 						})
 					}
 				}
