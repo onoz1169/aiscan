@@ -104,6 +104,9 @@ aiscan scan -t https://example.com -F markdown -o report.md
 
 # SARIF (for GitHub Code Scanning)
 aiscan scan -t https://example.com -F sarif -o results.sarif
+
+# HTML report (self-contained, shareable)
+aiscan scan -t https://example.com -F html -o report.html
 ```
 
 ### CI/CD usage
@@ -191,6 +194,7 @@ Detects LLM API endpoints automatically (OpenAI-compatible, Ollama, Anthropic, H
 | LLM06 | Excessive Agency — tool/function disclosure, capability enumeration | MEDIUM |
 | LLM07 | System Prompt Leakage — extraction probes, instruction pattern detection | HIGH |
 | LLM09 | Overreliance — model claims infallibility | MEDIUM |
+| LLM10 | Unbounded Consumption — no rate limiting on rapid-fire requests, large context accepted without restriction | HIGH / MEDIUM |
 
 **Endpoint auto-detection:**
 - OpenAI-compatible (`/v1/chat/completions`) — with model auto-discovery via `/v1/models`
@@ -211,7 +215,7 @@ aiscan scan [flags]
 
   -t, --target string     Target URL or hostname (required)
   -l, --layers strings    Layers to run: network, webapp, llm (default: all three)
-  -F, --format string     Output format: terminal, json, markdown, sarif (default: terminal)
+  -F, --format string     Output format: terminal, json, markdown, sarif, html (default: terminal)
   -o, --output string     Output file path (auto-named if empty)
       --fail-on string    Exit 1 if findings at or above: critical, high, medium, low, none (default: high)
   -s, --severity string   Only display findings at or above: critical, high, medium, low, info
@@ -245,11 +249,11 @@ Built by a security engineer who spent years breaking into systems, and now buil
 
 ## Roadmap
 
-- [ ] HTML report output
+- [x] HTML report output
 - [ ] Intelligence layer: CVE feed ingestion for latest vulnerability probes
-- [ ] UDP scanning (DNS, SNMP)
-- [ ] Rate limiting / LLM10 unbounded consumption probes
-- [ ] `--config` file support for custom targets and payload sets
+- [x] UDP scanning (DNS, SNMP, NTP, TFTP)
+- [x] Rate limiting / LLM10 unbounded consumption probes
+- [x] `--config` file support for custom targets and payload sets
 - [ ] aiwatch: companion defensive monitoring tool
 
 ---

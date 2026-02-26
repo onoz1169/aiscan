@@ -223,6 +223,160 @@ func WriteMarkdown(result *scanner.ScanResult, path string) error {
 	return nil
 }
 
+func htmlSeverityColor(s scanner.Severity) string {
+	switch s {
+	case scanner.SeverityCritical:
+		return "#dc2626"
+	case scanner.SeverityHigh:
+		return "#ef4444"
+	case scanner.SeverityMedium:
+		return "#f59e0b"
+	case scanner.SeverityLow:
+		return "#06b6d4"
+	default:
+		return "#6b7280"
+	}
+}
+
+func htmlEscape(s string) string {
+	r := strings.NewReplacer(
+		"&", "&amp;",
+		"<", "&lt;",
+		">", "&gt;",
+		`"`, "&quot;",
+		"'", "&#39;",
+	)
+	return r.Replace(s)
+}
+
+// WriteHTML writes the scan result as a self-contained HTML report to the given path.
+func WriteHTML(result *scanner.ScanResult, path string) error {
+	var b strings.Builder
+	duration := result.EndTime.Sub(result.StartTime)
+	counts := result.TotalFindings()
+
+	totalFindings := 0
+	for _, c := range counts {
+		totalFindings += c
+	}
+
+	b.WriteString(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>aiscan Security Report</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #e2e8f0; line-height: 1.6; }
+  .container { max-width: 960px; margin: 0 auto; padding: 2rem 1rem; }
+  h1 { font-size: 1.5rem; font-weight: 700; margin-bottom: 0.25rem; }
+  .meta { color: #94a3b8; font-size: 0.875rem; margin-bottom: 1.5rem; }
+  .meta span { margin-right: 1.5rem; }
+  .summary { display: flex; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 2rem; }
+  .summary-card { padding: 0.5rem 1rem; border-radius: 0.375rem; font-weight: 600; font-size: 0.875rem; background: #1e293b; }
+  .sev-CRITICAL { border-left: 4px solid #dc2626; }
+  .sev-HIGH { border-left: 4px solid #ef4444; }
+  .sev-MEDIUM { border-left: 4px solid #f59e0b; }
+  .sev-LOW { border-left: 4px solid #06b6d4; }
+  .sev-INFO { border-left: 4px solid #6b7280; }
+  .layer-section { margin-bottom: 2rem; }
+  .layer-header { font-size: 1.1rem; font-weight: 600; color: #60a5fa; padding: 0.5rem 0; border-bottom: 1px solid #334155; margin-bottom: 0.75rem; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.875rem; margin-bottom: 1rem; }
+  th { text-align: left; padding: 0.5rem 0.75rem; background: #1e293b; color: #94a3b8; font-weight: 600; border-bottom: 2px solid #334155; }
+  td { padding: 0.5rem 0.75rem; border-bottom: 1px solid #1e293b; vertical-align: top; }
+  tr:hover td { background: #1e293b; }
+  .badge { display: inline-block; padding: 0.125rem 0.5rem; border-radius: 0.25rem; font-size: 0.75rem; font-weight: 700; color: #fff; }
+  .finding-detail { background: #1e293b; border-radius: 0.375rem; padding: 1rem; margin-bottom: 0.75rem; }
+  .finding-title { font-weight: 600; margin-bottom: 0.5rem; }
+  .finding-field { margin-bottom: 0.25rem; font-size: 0.8125rem; }
+  .finding-field strong { color: #94a3b8; }
+  .evidence { font-family: "SF Mono", Menlo, monospace; font-size: 0.75rem; background: #0f172a; padding: 0.5rem; border-radius: 0.25rem; white-space: pre-wrap; word-break: break-all; margin-top: 0.25rem; }
+  footer { text-align: center; color: #475569; font-size: 0.75rem; margin-top: 2rem; padding-top: 1rem; border-top: 1px solid #1e293b; }
+</style>
+</head>
+<body>
+<div class="container">
+`)
+
+	b.WriteString(`<h1>aiscan Security Report</h1>`)
+	b.WriteString(fmt.Sprintf(`<div class="meta"><span>Target: %s</span><span>Date: %s</span><span>Duration: %s</span><span>Findings: %d</span></div>`,
+		htmlEscape(result.Target),
+		result.StartTime.Format("2006-01-02 15:04"),
+		formatDuration(duration),
+		totalFindings,
+	))
+
+	// Summary cards
+	b.WriteString(`<div class="summary">`)
+	for _, sev := range []scanner.Severity{
+		scanner.SeverityCritical,
+		scanner.SeverityHigh,
+		scanner.SeverityMedium,
+		scanner.SeverityLow,
+		scanner.SeverityInfo,
+	} {
+		b.WriteString(fmt.Sprintf(`<div class="summary-card sev-%s">%s: %d</div>`, sev, sev, counts[sev]))
+	}
+	b.WriteString(`</div>`)
+
+	// Per-layer sections
+	for _, layer := range result.Layers {
+		if len(layer.Findings) == 0 {
+			continue
+		}
+		b.WriteString(`<div class="layer-section">`)
+		b.WriteString(fmt.Sprintf(`<div class="layer-header">%s</div>`, layerDisplayName(layer.Layer)))
+
+		// Summary table
+		b.WriteString(`<table><thead><tr><th>ID</th><th>Title</th><th>Severity</th><th>Reference</th></tr></thead><tbody>`)
+		for _, f := range layer.Findings {
+			ref := f.Reference
+			if ref == "" {
+				ref = "-"
+			}
+			b.WriteString(fmt.Sprintf(`<tr><td>%s</td><td>%s</td><td><span class="badge" style="background:%s">%s</span></td><td>%s</td></tr>`,
+				htmlEscape(f.ID),
+				htmlEscape(f.Title),
+				htmlSeverityColor(f.Severity),
+				f.Severity,
+				htmlEscape(ref),
+			))
+		}
+		b.WriteString(`</tbody></table>`)
+
+		// Detailed findings
+		for _, f := range layer.Findings {
+			b.WriteString(`<div class="finding-detail">`)
+			b.WriteString(fmt.Sprintf(`<div class="finding-title">%s: %s <span class="badge" style="background:%s">%s</span></div>`,
+				htmlEscape(f.ID), htmlEscape(f.Title), htmlSeverityColor(f.Severity), f.Severity))
+
+			if f.Description != "" {
+				b.WriteString(fmt.Sprintf(`<div class="finding-field">%s</div>`, htmlEscape(f.Description)))
+			}
+			if f.Reference != "" {
+				b.WriteString(fmt.Sprintf(`<div class="finding-field"><strong>Reference:</strong> %s</div>`, htmlEscape(f.Reference)))
+			}
+			if f.Evidence != "" {
+				b.WriteString(fmt.Sprintf(`<div class="finding-field"><strong>Evidence:</strong><div class="evidence">%s</div></div>`, htmlEscape(f.Evidence)))
+			}
+			if f.Remediation != "" {
+				b.WriteString(fmt.Sprintf(`<div class="finding-field"><strong>Remediation:</strong> %s</div>`, htmlEscape(f.Remediation)))
+			}
+			b.WriteString(`</div>`)
+		}
+		b.WriteString(`</div>`)
+	}
+
+	b.WriteString(fmt.Sprintf(`<footer>Generated by aiscan v0.1.0 on %s</footer>`, result.StartTime.Format("2006-01-02 15:04:05 MST")))
+	b.WriteString(`</div></body></html>`)
+
+	if err := os.WriteFile(path, []byte(b.String()), 0644); err != nil {
+		return fmt.Errorf("write html file: %w", err)
+	}
+	return nil
+}
+
 func sarifLevel(s scanner.Severity) string {
 	switch s {
 	case scanner.SeverityCritical, scanner.SeverityHigh:

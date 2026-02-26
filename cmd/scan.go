@@ -15,6 +15,7 @@ import (
 	"github.com/onoz1169/aiscan/internal/scanner/webapp"
 	"github.com/onoz1169/aiscan/internal/toolcheck"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 )
 
 var (
@@ -34,7 +35,81 @@ var (
 	noNuclei        bool
 	nucleiTemplates string
 	showTools       bool
+	configFile      string
 )
+
+// ScanConfig mirrors the CLI flags for YAML config file support.
+type ScanConfig struct {
+	Target          string   `yaml:"target"`
+	Layers          []string `yaml:"layers"`
+	Timeout         int      `yaml:"timeout"`
+	Format          string   `yaml:"format"`
+	Output          string   `yaml:"output"`
+	FailOn          string   `yaml:"fail-on"`
+	Severity        string   `yaml:"severity"`
+	NoNmap          bool     `yaml:"no-nmap"`
+	NmapPath        string   `yaml:"nmap-path"`
+	NmapFlags       string   `yaml:"nmap-flags"`
+	NoNuclei        bool     `yaml:"no-nuclei"`
+	NucleiTemplates string   `yaml:"nuclei-templates"`
+}
+
+// applyConfig reads a YAML config file and applies values for flags not explicitly
+// set on the command line (CLI flags always take precedence).
+func applyConfig(cmd *cobra.Command, cfgPath string) error {
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		return fmt.Errorf("read config file: %w", err)
+	}
+	var cfg ScanConfig
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return fmt.Errorf("parse config file: %w", err)
+	}
+
+	setIfUnset := func(name string, apply func()) {
+		if !cmd.Flags().Changed(name) {
+			apply()
+		}
+	}
+
+	if cfg.Target != "" {
+		setIfUnset("target", func() { target = cfg.Target })
+	}
+	if len(cfg.Layers) > 0 {
+		setIfUnset("layers", func() { layers = cfg.Layers })
+	}
+	if cfg.Timeout != 0 {
+		setIfUnset("timeout", func() { timeout = cfg.Timeout })
+	}
+	if cfg.Format != "" {
+		setIfUnset("format", func() { outputFormat = cfg.Format })
+	}
+	if cfg.Output != "" {
+		setIfUnset("output", func() { outputFile = cfg.Output })
+	}
+	if cfg.FailOn != "" {
+		setIfUnset("fail-on", func() { failOn = cfg.FailOn })
+	}
+	if cfg.Severity != "" {
+		setIfUnset("severity", func() { severityFilter = cfg.Severity })
+	}
+	if cfg.NoNmap {
+		setIfUnset("no-nmap", func() { noNmap = true })
+	}
+	if cfg.NmapPath != "" {
+		setIfUnset("nmap-path", func() { nmapPath = cfg.NmapPath })
+	}
+	if cfg.NmapFlags != "" {
+		setIfUnset("nmap-flags", func() { nmapFlags = cfg.NmapFlags })
+	}
+	if cfg.NoNuclei {
+		setIfUnset("no-nuclei", func() { noNuclei = true })
+	}
+	if cfg.NucleiTemplates != "" {
+		setIfUnset("nuclei-templates", func() { nucleiTemplates = cfg.NucleiTemplates })
+	}
+	return nil
+}
 
 var scanCmd = &cobra.Command{
 	Use:   "scan",
@@ -46,7 +121,7 @@ var scanCmd = &cobra.Command{
 func init() {
 	scanCmd.Flags().StringVarP(&target, "target", "t", "", "Target URL or hostname (required)")
 	scanCmd.Flags().StringSliceVarP(&layers, "layers", "l", []string{"network", "webapp", "llm"}, "Which layers to run")
-	scanCmd.Flags().StringVarP(&outputFormat, "format", "F", "terminal", "Output format: terminal, json, markdown, sarif")
+	scanCmd.Flags().StringVarP(&outputFormat, "format", "F", "terminal", "Output format: terminal, json, markdown, sarif, html")
 	scanCmd.Flags().StringVarP(&outputFile, "output", "o", "", "Output file path (stdout if empty, format auto-detected)")
 	scanCmd.Flags().IntVar(&timeout, "timeout", 10, "Timeout per scan in seconds")
 	scanCmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Verbose output")
@@ -60,8 +135,7 @@ func init() {
 	scanCmd.Flags().StringVar(&nmapFlags, "nmap-flags", "", "Additional nmap flags")
 	scanCmd.Flags().BoolVar(&noNuclei, "no-nuclei", false, "Disable nuclei scan even if installed")
 	scanCmd.Flags().StringVar(&nucleiTemplates, "nuclei-templates", "", "Nuclei template categories (default: cves,misconfiguration,exposed-panels)")
-
-	scanCmd.MarkFlagRequired("target")
+	scanCmd.Flags().StringVar(&configFile, "config", "", "Path to YAML config file (CLI flags override config)")
 
 	rootCmd.Flags().BoolVar(&showTools, "show-tools", false, "Show detected optional tools and exit")
 	rootCmd.AddCommand(scanCmd)
@@ -71,6 +145,26 @@ func runScan(cmd *cobra.Command, args []string) error {
 	if showTools {
 		printToolStatus()
 		return nil
+	}
+
+	// Load config file: explicit --config, then auto-detect .aiscan.yaml
+	cfgPath := configFile
+	if cfgPath == "" {
+		for _, candidate := range []string{".aiscan.yaml", ".aiscan.yml", "aiscan.yaml"} {
+			if _, err := os.Stat(candidate); err == nil {
+				cfgPath = candidate
+				break
+			}
+		}
+	}
+	if cfgPath != "" {
+		if err := applyConfig(cmd, cfgPath); err != nil {
+			return fmt.Errorf("config: %w", err)
+		}
+	}
+
+	if target == "" {
+		return fmt.Errorf("required flag --target not set (provide via flag or config file)")
 	}
 
 	if noColor {
@@ -212,6 +306,7 @@ var fileReports = map[string]fileReportSpec{
 	"json":     {"aiscan-report.json", report.WriteJSON},
 	"markdown": {"aiscan-report.md", report.WriteMarkdown},
 	"sarif":    {"aiscan-results.sarif", report.WriteSARIF},
+	"html":     {"aiscan-report.html", report.WriteHTML},
 }
 
 func writeReport(result *scanner.ScanResult, format, outFile string) error {
