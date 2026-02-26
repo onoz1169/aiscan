@@ -119,9 +119,9 @@ func detectLLMEndpoint(client *http.Client, target string) (endpointKind, string
 	}
 
 	// Try Ollama-compatible
-	if resp, err := tryOllama(client, target, "Hello"); err == nil {
+	if resp, err := tryOllama(client, target, "Hello", modelName); err == nil {
 		if looksLikeLLMResponse(resp) {
-			return endpointOllama, "", nil
+			return endpointOllama, modelName, nil
 		}
 	}
 
@@ -225,9 +225,15 @@ func tryAnthropic(client *http.Client, target, prompt string) (string, error) {
 	return postJSON(client, target+"/v1/messages", body)
 }
 
-func tryOllama(client *http.Client, target, prompt string) (string, error) {
+func tryOllama(client *http.Client, target, prompt, model string) (string, error) {
+	if model == "" {
+		model = "llama3.2"
+	}
 	body := map[string]interface{}{
-		"prompt": prompt,
+		"model": model,
+		"messages": []map[string]string{
+			{"role": "user", "content": prompt},
+		},
 		"stream": false,
 	}
 	return postJSON(client, target+"/api/chat", body)
@@ -299,7 +305,7 @@ func senderForEndpoint(client *http.Client, target string, kind endpointKind, mo
 		case endpointAnthropic:
 			return tryAnthropic(client, target, prompt)
 		case endpointOllama:
-			return tryOllama(client, target, prompt)
+			return tryOllama(client, target, prompt, model)
 		case endpointHFTGI:
 			return tryHFTGI(client, target, prompt)
 		default:
