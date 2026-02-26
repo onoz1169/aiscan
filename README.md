@@ -250,7 +250,7 @@ Built by a security engineer who spent years breaking into systems, and now buil
 ## Roadmap
 
 - [x] HTML report output
-- [ ] Intelligence layer: CVE feed ingestion for latest vulnerability probes
+- [x] Intelligence layer: CVE feed ingestion for latest vulnerability probes
 - [x] UDP scanning (DNS, SNMP, NTP, TFTP)
 - [x] Rate limiting / LLM10 unbounded consumption probes
 - [x] `--config` file support for custom targets and payload sets

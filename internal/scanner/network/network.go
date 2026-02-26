@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/onoz1169/aiscan/internal/cve"
 	"github.com/onoz1169/aiscan/internal/scanner"
 	"github.com/onoz1169/aiscan/internal/toolcheck"
 )
@@ -275,6 +276,7 @@ type NmapOptions struct {
 	Disabled   bool   // if true, skip nmap even if installed
 	Path       string // override PATH lookup (empty = auto)
 	ExtraFlags string // additional nmap flags
+	CVEClient  *cve.Client // nil = CVE lookup disabled
 }
 
 // NetworkScanner implements the Scanner interface for network-layer port scanning.
@@ -456,7 +458,7 @@ func (s *NetworkScanner) Scan(target string, timeoutSec int) (*scanner.LayerResu
 			if nmapTimeout < 60*time.Second {
 				nmapTimeout = 60 * time.Second
 			}
-			enricher := newNmapEnricher(nmapPath, s.nmapOpts.ExtraFlags, nmapTimeout)
+			enricher := newNmapEnricher(nmapPath, s.nmapOpts.ExtraFlags, nmapTimeout, s.nmapOpts.CVEClient)
 			ctx, cancel := context.WithTimeout(context.Background(), enricher.timeout)
 			defer cancel()
 			nmapFindings, err := enricher.Enrich(ctx, host, openPorts)

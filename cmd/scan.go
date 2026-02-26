@@ -8,6 +8,7 @@ import (
 
 	"github.com/briandowns/spinner"
 	"github.com/fatih/color"
+	"github.com/onoz1169/aiscan/internal/cve"
 	"github.com/onoz1169/aiscan/internal/report"
 	"github.com/onoz1169/aiscan/internal/scanner"
 	"github.com/onoz1169/aiscan/internal/scanner/llm"
@@ -36,6 +37,8 @@ var (
 	nucleiTemplates string
 	showTools       bool
 	configFile      string
+	cveLookup       bool
+	nvdAPIKey       string
 )
 
 // ScanConfig mirrors the CLI flags for YAML config file support.
@@ -136,6 +139,8 @@ func init() {
 	scanCmd.Flags().BoolVar(&noNuclei, "no-nuclei", false, "Disable nuclei scan even if installed")
 	scanCmd.Flags().StringVar(&nucleiTemplates, "nuclei-templates", "", "Nuclei template categories (default: cves,misconfiguration,exposed-panels)")
 	scanCmd.Flags().StringVar(&configFile, "config", "", "Path to YAML config file (CLI flags override config)")
+	scanCmd.Flags().BoolVar(&cveLookup, "cve-lookup", false, "Enrich nmap findings with NVD CVE data (requires --nvd-api-key or NVD_API_KEY env)")
+	scanCmd.Flags().StringVar(&nvdAPIKey, "nvd-api-key", "", "NVD API key for CVE lookups (or set NVD_API_KEY env var)")
 
 	rootCmd.Flags().BoolVar(&showTools, "show-tools", false, "Show detected optional tools and exit")
 	rootCmd.AddCommand(scanCmd)
@@ -326,6 +331,18 @@ func writeReport(result *scanner.ScanResult, format, outFile string) error {
 }
 
 func buildScanners(layers []string) []scanner.Scanner {
+	// Resolve NVD API key: flag > env var
+	apiKey := nvdAPIKey
+	if apiKey == "" {
+		apiKey = os.Getenv("NVD_API_KEY")
+	}
+	var cveClient *cve.Client
+	if cveLookup && apiKey != "" {
+		cveClient = cve.New(apiKey)
+	} else if cveLookup && apiKey == "" {
+		fmt.Fprintln(os.Stderr, "  [!] --cve-lookup requires --nvd-api-key or NVD_API_KEY env var; skipping CVE lookup")
+	}
+
 	var scanners []scanner.Scanner
 	for _, l := range layers {
 		switch l {
@@ -334,6 +351,7 @@ func buildScanners(layers []string) []scanner.Scanner {
 				Disabled:   noNmap,
 				Path:       nmapPath,
 				ExtraFlags: nmapFlags,
+				CVEClient:  cveClient,
 			}))
 		case "webapp":
 			scanners = append(scanners, webapp.NewWithOptions(webapp.NucleiOptions{

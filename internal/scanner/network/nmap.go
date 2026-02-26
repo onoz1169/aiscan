@@ -7,6 +7,7 @@ import (
 	"time"
 
 	nmap "github.com/Ullaakut/nmap/v3"
+	"github.com/onoz1169/aiscan/internal/cve"
 	"github.com/onoz1169/aiscan/internal/scanner"
 )
 
@@ -15,13 +16,15 @@ type nmapEnricher struct {
 	binaryPath string
 	extraFlags string
 	timeout    time.Duration
+	cveClient  *cve.Client // nil = CVE lookup disabled
 }
 
-func newNmapEnricher(binaryPath, extraFlags string, timeout time.Duration) *nmapEnricher {
+func newNmapEnricher(binaryPath, extraFlags string, timeout time.Duration, cveClient *cve.Client) *nmapEnricher {
 	return &nmapEnricher{
 		binaryPath: binaryPath,
 		extraFlags: extraFlags,
 		timeout:    timeout,
+		cveClient:  cveClient,
 	}
 }
 
@@ -97,8 +100,48 @@ func (e *nmapEnricher) Enrich(ctx context.Context, host string, openPorts []int)
 				Evidence:    evidence,
 				Remediation: remediation,
 			})
+
+			// CVE lookup: only when version info is available
+			if e.cveClient != nil && p.Service.Product != "" && p.Service.Version != "" {
+				cveResults, err := e.cveClient.Lookup(p.Service.Product, p.Service.Version, 3, 4.0)
+				if err == nil {
+					for _, c := range cveResults {
+						cveSev := cveSeverity(c.Score)
+						findings = append(findings, scanner.Finding{
+							ID:          fmt.Sprintf("NET-CVE-%s", c.ID),
+							Layer:       "network",
+							Title:       fmt.Sprintf("%s in %s %s", c.ID, p.Service.Product, p.Service.Version),
+							Description: truncateDesc(c.Description, 300),
+							Severity:    cveSev,
+							Reference:   c.URL,
+							Evidence:    fmt.Sprintf("CVSS %.1f (%s) — detected on port %d/%s", c.Score, c.Severity, p.ID, p.Protocol),
+							Remediation: fmt.Sprintf("Update %s to a patched version. See %s", p.Service.Product, c.URL),
+						})
+					}
+				}
+			}
 		}
 	}
 
 	return findings, nil
+}
+
+func cveSeverity(score float64) scanner.Severity {
+	switch {
+	case score >= 9.0:
+		return scanner.SeverityCritical
+	case score >= 7.0:
+		return scanner.SeverityHigh
+	case score >= 4.0:
+		return scanner.SeverityMedium
+	default:
+		return scanner.SeverityLow
+	}
+}
+
+func truncateDesc(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
 }
