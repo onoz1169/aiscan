@@ -13,6 +13,7 @@ import (
 	"github.com/onoz1169/1scan/internal/report"
 	"github.com/onoz1169/1scan/internal/scanner"
 	"github.com/onoz1169/1scan/internal/scanner/llm"
+	"github.com/onoz1169/1scan/internal/scanner/mcp"
 	"github.com/onoz1169/1scan/internal/scanner/network"
 	"github.com/onoz1169/1scan/internal/scanner/webapp"
 	"github.com/onoz1169/1scan/internal/toolcheck"
@@ -147,7 +148,7 @@ var scanCmd = &cobra.Command{
 
 func init() {
 	scanCmd.Flags().StringVarP(&target, "target", "t", "", "Target URL or hostname (required)")
-	scanCmd.Flags().StringSliceVarP(&layers, "layers", "l", []string{"network", "webapp", "llm"}, "Which layers to run")
+	scanCmd.Flags().StringSliceVarP(&layers, "layers", "l", []string{"network", "webapp", "llm", "mcp"}, "Which layers to run")
 	scanCmd.Flags().StringVarP(&outputFormat, "format", "F", "terminal", "Output format: terminal, json, markdown, sarif, html")
 	scanCmd.Flags().StringVarP(&outputFile, "output", "o", "", "Output file path (stdout if empty, format auto-detected)")
 	scanCmd.Flags().IntVar(&timeout, "timeout", 10, "Timeout per scan in seconds")
@@ -472,6 +473,8 @@ func buildScanners(layers []string) []scanner.Scanner {
 			))
 		case "llm":
 			scanners = append(scanners, llm.NewWithAuth(auth))
+		case "mcp":
+			scanners = append(scanners, mcp.NewWithAuth(auth))
 		default:
 			fmt.Fprintf(os.Stderr, "[!] Unknown layer: %s (skipping)\n", l)
 		}
