@@ -25,6 +25,7 @@ type NucleiOptions struct {
 type WebAppScanner struct {
 	nucleiOpts NucleiOptions
 	vtClient   *virustotal.Client // nil = VT check disabled
+	authOpts   scanner.AuthOptions
 }
 
 func New() *WebAppScanner {
@@ -38,6 +39,11 @@ func NewWithOptions(opts NucleiOptions) *WebAppScanner {
 // NewWithVT creates a WebAppScanner with nuclei and VirusTotal options.
 func NewWithVT(nucleiOpts NucleiOptions, vtClient *virustotal.Client) *WebAppScanner {
 	return &WebAppScanner{nucleiOpts: nucleiOpts, vtClient: vtClient}
+}
+
+// NewWithAll creates a WebAppScanner with all options including auth.
+func NewWithAll(nucleiOpts NucleiOptions, vtClient *virustotal.Client, authOpts scanner.AuthOptions) *WebAppScanner {
+	return &WebAppScanner{nucleiOpts: nucleiOpts, vtClient: vtClient, authOpts: authOpts}
 }
 
 func (s *WebAppScanner) Name() string {
@@ -61,13 +67,12 @@ func (s *WebAppScanner) Scan(target string, timeoutSec int) (*scanner.LayerResul
 		Target: target,
 	}
 
+	baseTransport := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
 	client := &http.Client{
-		Timeout: time.Duration(timeoutSec) * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true,
-			},
-		},
+		Timeout:   time.Duration(timeoutSec) * time.Second,
+		Transport: scanner.NewAuthTransport(baseTransport, s.authOpts),
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= 10 {
 				return fmt.Errorf("too many redirects")

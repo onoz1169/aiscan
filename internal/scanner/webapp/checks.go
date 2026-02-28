@@ -159,11 +159,61 @@ type interestingPath struct {
 }
 
 var interestingPaths = []interestingPath{
+	// Version control
 	{"/.git/HEAD", scanner.SeverityHigh, "Git repository exposed"},
 	{"/.git/config", scanner.SeverityHigh, "Git config exposed"},
-	{"/.env", scanner.SeverityCritical, ".env file exposed - may contain secrets"},
+	{"/.git/logs/HEAD", scanner.SeverityHigh, "Git log exposed"},
+	{"/.gitignore", scanner.SeverityLow, ".gitignore exposes project structure"},
+	{"/.svn/entries", scanner.SeverityHigh, "SVN repository exposed"},
+
+	// Secrets and config files
+	{"/.env", scanner.SeverityCritical, ".env file exposed — may contain secrets"},
 	{"/.env.local", scanner.SeverityCritical, ".env.local exposed"},
 	{"/.env.production", scanner.SeverityCritical, ".env.production exposed"},
+	{"/.env.staging", scanner.SeverityCritical, ".env.staging exposed"},
+	{"/.env.development", scanner.SeverityHigh, ".env.development exposed"},
+	{"/.env.example", scanner.SeverityMedium, ".env.example exposes expected config keys"},
+	{"/config/database.yml", scanner.SeverityCritical, "Rails database config exposed"},
+	{"/config/secrets.yml", scanner.SeverityCritical, "Rails secrets config exposed"},
+	{"/docker-compose.yml", scanner.SeverityHigh, "Docker Compose config exposed"},
+	{"/docker-compose.override.yml", scanner.SeverityHigh, "Docker Compose override exposed"},
+	{"/Dockerfile", scanner.SeverityMedium, "Dockerfile exposes infrastructure details"},
+	{"/.npmrc", scanner.SeverityHigh, ".npmrc may contain npm auth tokens"},
+	{"/.pypirc", scanner.SeverityHigh, ".pypirc may contain PyPI credentials"},
+
+	// Cloud credentials
+	{"/.aws/credentials", scanner.SeverityCritical, "AWS credentials file exposed"},
+
+	// Web server config
+	{"/.htaccess", scanner.SeverityHigh, ".htaccess exposes rewrite rules and auth config"},
+	{"/.htpasswd", scanner.SeverityCritical, ".htpasswd exposes hashed credentials"},
+	{"/web.config", scanner.SeverityHigh, "IIS web.config exposed"},
+	{"/web.xml", scanner.SeverityMedium, "Java web.xml deployment descriptor exposed"},
+
+	// Well-known endpoints
+	{"/.well-known/security.txt", scanner.SeverityInfo, "security.txt present"},
+	{"/.well-known/apple-app-site-association", scanner.SeverityInfo, "Apple app site association exposed"},
+	{"/.well-known/acme-challenge/", scanner.SeverityInfo, "ACME challenge endpoint accessible"},
+
+	// API endpoints
+	{"/graphql", scanner.SeverityMedium, "GraphQL endpoint accessible"},
+	{"/api/v1/", scanner.SeverityInfo, "API v1 endpoint accessible"},
+	{"/api/v2/", scanner.SeverityInfo, "API v2 endpoint accessible"},
+	{"/api/health", scanner.SeverityInfo, "API health endpoint accessible"},
+	{"/api/version", scanner.SeverityInfo, "API version endpoint accessible"},
+
+	// Dependency/build files
+	{"/package.json", scanner.SeverityMedium, "package.json exposes dependency list"},
+	{"/composer.json", scanner.SeverityMedium, "composer.json exposes dependency list"},
+	{"/requirements.txt", scanner.SeverityMedium, "requirements.txt exposes Python dependencies"},
+	{"/Makefile", scanner.SeverityLow, "Makefile exposes build commands"},
+
+	// Database dumps
+	{"/dump.sql", scanner.SeverityCritical, "SQL database dump accessible"},
+	{"/database.sql", scanner.SeverityCritical, "SQL database dump accessible"},
+	{"/backup.sql", scanner.SeverityCritical, "SQL backup accessible"},
+
+	// Application admin and debug
 	{"/backup.zip", scanner.SeverityHigh, "Backup archive accessible"},
 	{"/backup.tar.gz", scanner.SeverityHigh, "Backup archive accessible"},
 	{"/admin", scanner.SeverityMedium, "Admin panel accessible"},
@@ -175,11 +225,12 @@ var interestingPaths = []interestingPath{
 	{"/swagger-ui.html", scanner.SeverityMedium, "Swagger UI exposed"},
 	{"/v1/api-docs", scanner.SeverityMedium, "API docs exposed"},
 	{"/actuator", scanner.SeverityHigh, "Spring Boot Actuator exposed"},
-	{"/actuator/env", scanner.SeverityCritical, "Spring Boot env actuator - may leak secrets"},
+	{"/actuator/env", scanner.SeverityCritical, "Spring Boot env actuator — may leak secrets"},
+	{"/actuator/heapdump", scanner.SeverityCritical, "Spring Boot heap dump endpoint accessible"},
 	{"/debug", scanner.SeverityHigh, "Debug endpoint accessible"},
 	{"/config.json", scanner.SeverityHigh, "Config file exposed"},
 	{"/.DS_Store", scanner.SeverityLow, ".DS_Store exposes directory structure"},
-	{"/robots.txt", scanner.SeverityInfo, "robots.txt exists - check for hidden paths"},
+	{"/robots.txt", scanner.SeverityInfo, "robots.txt exists — check for hidden paths"},
 	{"/sitemap.xml", scanner.SeverityInfo, "Sitemap accessible"},
 	{"/crossdomain.xml", scanner.SeverityMedium, "Flash crossdomain policy exists"},
 	{"/wp-admin/", scanner.SeverityMedium, "WordPress admin panel detected"},

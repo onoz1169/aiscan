@@ -13,10 +13,17 @@ import (
 )
 
 // LLMScanner implements scanner.Scanner for LLM endpoint security testing.
-type LLMScanner struct{}
+type LLMScanner struct {
+	authOpts scanner.AuthOptions
+}
 
 func New() *LLMScanner {
 	return &LLMScanner{}
+}
+
+// NewWithAuth creates an LLMScanner that injects auth credentials into every request.
+func NewWithAuth(opts scanner.AuthOptions) *LLMScanner {
+	return &LLMScanner{authOpts: opts}
 }
 
 var embeddedPayloads map[string]payloads.PayloadFile
@@ -42,7 +49,8 @@ func (s *LLMScanner) Scan(target string, timeoutSec int) (*scanner.LayerResult, 
 	}
 
 	client := &http.Client{
-		Timeout: time.Duration(timeoutSec) * time.Second,
+		Timeout:   time.Duration(timeoutSec) * time.Second,
+		Transport: scanner.NewAuthTransport(nil, s.authOpts),
 	}
 
 	target = strings.TrimRight(target, "/")
@@ -78,6 +86,7 @@ func (s *LLMScanner) Scan(target string, timeoutSec int) (*scanner.LayerResult, 
 	runExcessiveAgency(sendFunc, result)
 	runOverreliance(sendFunc, result)
 	runRateLimiting(client, target, endpointType, modelName, result)
+	runRAGPoisoning(sendFunc, result)
 
 	result.Duration = time.Since(start)
 	return result, nil

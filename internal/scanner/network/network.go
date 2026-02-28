@@ -36,6 +36,7 @@ type NetworkEnrichmentOptions struct {
 type NetworkScanner struct {
 	nmapOpts   NmapOptions
 	enrichOpts NetworkEnrichmentOptions
+	authOpts   scanner.AuthOptions
 }
 
 func New() *NetworkScanner {
@@ -44,6 +45,11 @@ func New() *NetworkScanner {
 
 func NewWithOptions(nmapOpts NmapOptions, enrichOpts NetworkEnrichmentOptions) *NetworkScanner {
 	return &NetworkScanner{nmapOpts: nmapOpts, enrichOpts: enrichOpts}
+}
+
+// NewWithAuth creates a NetworkScanner with authentication options for HTTP header probing.
+func NewWithAuth(nmapOpts NmapOptions, enrichOpts NetworkEnrichmentOptions, authOpts scanner.AuthOptions) *NetworkScanner {
+	return &NetworkScanner{nmapOpts: nmapOpts, enrichOpts: enrichOpts, authOpts: authOpts}
 }
 
 func (s *NetworkScanner) Name() string {
