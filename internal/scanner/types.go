@@ -25,6 +25,17 @@ type Finding struct {
 	Remediation string
 }
 
+// AttackChain represents a correlated cross-layer attack scenario.
+// Chains are detected by combining findings from multiple layers.
+type AttackChain struct {
+	ID          string     `json:"id"`
+	Title       string     `json:"title"`
+	Severity    Severity   `json:"severity"`
+	FindingIDs  []string   `json:"finding_ids"`
+	LayerNames  []string   `json:"layers"`
+	Description string     `json:"description"` // 1-sentence attack scenario
+}
+
 // LayerResult holds results from one scanning layer
 type LayerResult struct {
 	Layer    string
@@ -36,10 +47,11 @@ type LayerResult struct {
 
 // ScanResult is the complete output of a full scan
 type ScanResult struct {
-	Target    string
-	StartTime time.Time
-	EndTime   time.Time
-	Layers    []LayerResult
+	Target       string
+	StartTime    time.Time
+	EndTime      time.Time
+	Layers       []LayerResult
+	AttackChains []AttackChain
 }
 
 // TotalFindings returns count by severity

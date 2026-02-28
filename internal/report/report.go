@@ -1,6 +1,7 @@
 package report
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -18,7 +19,14 @@ func formatDuration(d time.Duration) string {
 	return fmt.Sprintf("%.1fs", d.Seconds())
 }
 
-// SARIF 2.1.0 types
+// fingerprint returns a stable sha256 hex string for a finding, used as SARIF partialFingerprint.
+func fingerprint(f scanner.Finding, target string) string {
+	h := sha256.New()
+	h.Write([]byte(f.Layer + ":" + f.ID + ":" + f.Title + ":" + target))
+	return fmt.Sprintf("%x", h.Sum(nil))[:16]
+}
+
+// ─── SARIF 2.1.0 types ───────────────────────────────────────────────────────
 
 type sarifReport struct {
 	Schema  string     `json:"$schema"`
@@ -46,15 +54,18 @@ type sarifRule struct {
 	ID               string                 `json:"id"`
 	Name             string                 `json:"name"`
 	ShortDescription map[string]string      `json:"shortDescription"`
+	Help             map[string]string      `json:"help,omitempty"`
 	DefaultConfig    map[string]string      `json:"defaultConfiguration"`
 	Properties       map[string]interface{} `json:"properties"`
 }
 
 type sarifResult struct {
-	RuleID    string            `json:"ruleId"`
-	Level     string            `json:"level"`
-	Message   map[string]string `json:"message"`
-	Locations []sarifLocation   `json:"locations"`
+	RuleID              string            `json:"ruleId"`
+	Level               string            `json:"level"`
+	Message             map[string]string `json:"message"`
+	PartialFingerprints map[string]string `json:"partialFingerprints,omitempty"`
+	Locations           []sarifLocation   `json:"locations"`
+	Properties          map[string]interface{} `json:"properties,omitempty"`
 }
 
 type sarifLocation struct {
@@ -66,8 +77,10 @@ type sarifPhysical struct {
 	Region           map[string]int    `json:"region"`
 }
 
+// ─── Terminal colors ──────────────────────────────────────────────────────────
+
 var (
-	separator = strings.Repeat("\u2501", 46)
+	separator = strings.Repeat("\u2501", 50)
 
 	colorCritical    = color.New(color.FgRed, color.Bold)
 	colorHigh        = color.New(color.FgRed)
@@ -75,6 +88,8 @@ var (
 	colorLow         = color.New(color.FgCyan)
 	colorInfo        = color.New(color.FgWhite)
 	colorLayerHeader = color.New(color.FgBlue, color.Bold)
+	colorChain       = color.New(color.FgRed, color.Bold)
+	colorMeta        = color.New(color.FgHiBlack)
 )
 
 func severityColor(s scanner.Severity) *color.Color {
@@ -105,47 +120,211 @@ func layerDisplayName(layer string) string {
 	}
 }
 
+// chainLayerLabel returns a short, capitalized layer name for attack chain display.
+func chainLayerLabel(layer string) string {
+	switch strings.ToLower(layer) {
+	case "network":
+		return "Network"
+	case "webapp":
+		return "WebApp"
+	case "llm":
+		return "LLM"
+	default:
+		return strings.ToUpper(layer[:1]) + layer[1:]
+	}
+}
+
+// ─── Terminal output ──────────────────────────────────────────────────────────
+
 // PrintTerminal outputs a colored security report to the terminal.
-func PrintTerminal(result *scanner.ScanResult) {
+// Layout: Banner → Summary → Attack Chains → Layer Findings (Evidence+Fix)
+func PrintTerminal(result *scanner.ScanResult, lang Lang) {
+	lbl := getLabels(lang)
 	duration := result.EndTime.Sub(result.StartTime)
+	layerNames := make([]string, 0, len(result.Layers))
+	for _, lr := range result.Layers {
+		layerNames = append(layerNames, lr.Layer)
+	}
 
+	// ── Banner ────────────────────────────────────────────────────────────────
 	fmt.Println(separator)
-	fmt.Println("  1scan — Security Scan Report")
-	fmt.Printf("  Target: %s\n", result.Target)
-	fmt.Printf("  Duration: %s\n", formatDuration(duration))
+	fmt.Printf("  1scan  |  %s: %s\n", lbl.Target, result.Target)
+	fmt.Printf("  %s: %s  |  %s: %s\n",
+		lbl.Duration, formatDuration(duration),
+		lbl.Layers, strings.Join(layerNames, ", "))
 	fmt.Println(separator)
 
-	for _, layer := range result.Layers {
+	// ── Summary (top, before findings) ───────────────────────────────────────
+	counts := result.TotalFindings()
+	fmt.Printf("\n  %s   ", lbl.Summary)
+	colorCritical.Printf("CRITICAL %d  ", counts[scanner.SeverityCritical])
+	colorHigh.Printf("HIGH %d  ", counts[scanner.SeverityHigh])
+	colorMedium.Printf("MEDIUM %d  ", counts[scanner.SeverityMedium])
+	colorLow.Printf("LOW %d  ", counts[scanner.SeverityLow])
+	colorInfo.Printf("INFO %d", counts[scanner.SeverityInfo])
+	fmt.Println()
+
+	// ── Attack Chains ─────────────────────────────────────────────────────────
+	if len(result.AttackChains) > 0 {
 		fmt.Println()
-		colorLayerHeader.Printf("[%s]\n", layerDisplayName(layer.Layer))
-		for _, f := range layer.Findings {
-			sc := severityColor(f.Severity)
-			fmt.Printf("  ● %-42s ", f.Title)
-			sc.Println(string(f.Severity))
+		for _, chain := range result.AttackChains {
+			colorChain.Printf("\u26a0  %s", lbl.AttackChainDetected)
+			fmt.Printf("  ")
+			severityColor(chain.Severity).Println(string(chain.Severity))
+
+			for _, layerName := range chain.LayerNames {
+				// Find the finding from this layer that contributed to the chain
+				for _, lr := range result.Layers {
+					if !strings.EqualFold(lr.Layer, layerName) {
+						continue
+					}
+					for _, f := range lr.Findings {
+						for _, fid := range chain.FindingIDs {
+							if f.ID == fid {
+								fmt.Printf("   %-9s: %-42s", chainLayerLabel(f.Layer), f.Title)
+								severityColor(f.Severity).Printf("(%s)\n", f.Severity)
+							}
+						}
+					}
+				}
+			}
+			colorMeta.Printf("   %s %s\n", lbl.Arrow, chain.Description)
 		}
 	}
 
-	counts := result.TotalFindings()
-	fmt.Println()
-	fmt.Println(separator)
-	fmt.Println("  SUMMARY")
-	fmt.Print("  ")
-	colorCritical.Printf("CRITICAL: %d", counts[scanner.SeverityCritical])
-	fmt.Print("  ")
-	colorHigh.Printf("HIGH: %d", counts[scanner.SeverityHigh])
-	fmt.Print("  ")
-	colorMedium.Printf("MEDIUM: %d", counts[scanner.SeverityMedium])
-	fmt.Print("  ")
-	colorLow.Printf("LOW: %d", counts[scanner.SeverityLow])
-	fmt.Print("  ")
-	colorInfo.Printf("INFO: %d", counts[scanner.SeverityInfo])
+	// ── Per-layer findings ────────────────────────────────────────────────────
+	for _, layer := range result.Layers {
+		if len(layer.Findings) == 0 {
+			continue
+		}
+		fmt.Println()
+		colorLayerHeader.Printf("[%s]\n", layerDisplayName(layer.Layer))
+
+		for _, f := range layer.Findings {
+			sc := severityColor(f.Severity)
+			fmt.Printf("  \u25cf %-46s", f.Title)
+			sc.Println(string(f.Severity))
+
+			if f.Evidence != "" {
+				colorMeta.Printf("    %-11s: %s\n", lbl.Evidence, f.Evidence)
+			}
+			if f.Remediation != "" {
+				colorMeta.Printf("    %-11s: %s\n", lbl.Fix, f.Remediation)
+			}
+			if f.Reference != "" {
+				colorMeta.Printf("    %-11s: %s\n", lbl.Reference, f.Reference)
+			}
+		}
+	}
+
 	fmt.Println()
 	fmt.Println(separator)
 }
 
-// WriteJSON writes the scan result as indented JSON to the given path.
+// ─── JSON output ──────────────────────────────────────────────────────────────
+
+// jsonScanResult is the JSON schema for scan results, matching docs/report-design.md.
+type jsonScanResult struct {
+	SchemaVersion string             `json:"schema_version"`
+	Scanner       jsonScanner        `json:"scanner"`
+	Target        string             `json:"target"`
+	StartedAt     string             `json:"started_at"`
+	DurationMS    int64              `json:"duration_ms"`
+	Summary       jsonSummary        `json:"summary"`
+	AttackChains  []jsonAttackChain  `json:"attack_chains"`
+	Layers        []jsonLayer        `json:"layers"`
+}
+
+type jsonScanner struct {
+	Name    string `json:"name"`
+	Version string `json:"version"`
+}
+
+type jsonSummary struct {
+	Critical int `json:"critical"`
+	High     int `json:"high"`
+	Medium   int `json:"medium"`
+	Low      int `json:"low"`
+	Info     int `json:"info"`
+	Total    int `json:"total"`
+}
+
+type jsonAttackChain struct {
+	ID          string   `json:"id"`
+	Title       string   `json:"title"`
+	Severity    string   `json:"severity"`
+	FindingIDs  []string `json:"finding_ids"`
+	Description string   `json:"description"`
+}
+
+type jsonLayer struct {
+	Layer    string        `json:"layer"`
+	Findings []jsonFinding `json:"findings"`
+}
+
+type jsonFinding struct {
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	Severity    string `json:"severity"`
+	Evidence    string `json:"evidence,omitempty"`
+	Remediation string `json:"remediation,omitempty"`
+	Reference   string `json:"reference,omitempty"`
+	OWASPRef    string `json:"owasp_llm,omitempty"`
+	Fingerprint string `json:"fingerprint"`
+}
+
+// WriteJSON writes the scan result as indented JSON following the 1scan schema.
 func WriteJSON(result *scanner.ScanResult, path string) error {
-	data, err := json.MarshalIndent(result, "", "  ")
+	counts := result.TotalFindings()
+	total := 0
+	for _, c := range counts {
+		total += c
+	}
+
+	out := jsonScanResult{
+		SchemaVersion: "1.0",
+		Scanner:       jsonScanner{Name: "1scan", Version: "0.1.1"},
+		Target:        result.Target,
+		StartedAt:     result.StartTime.UTC().Format(time.RFC3339),
+		DurationMS:    result.EndTime.Sub(result.StartTime).Milliseconds(),
+		Summary: jsonSummary{
+			Critical: counts[scanner.SeverityCritical],
+			High:     counts[scanner.SeverityHigh],
+			Medium:   counts[scanner.SeverityMedium],
+			Low:      counts[scanner.SeverityLow],
+			Info:     counts[scanner.SeverityInfo],
+			Total:    total,
+		},
+	}
+
+	for _, c := range result.AttackChains {
+		out.AttackChains = append(out.AttackChains, jsonAttackChain{
+			ID:          c.ID,
+			Title:       c.Title,
+			Severity:    strings.ToLower(string(c.Severity)),
+			FindingIDs:  c.FindingIDs,
+			Description: c.Description,
+		})
+	}
+
+	for _, lr := range result.Layers {
+		jl := jsonLayer{Layer: lr.Layer}
+		for _, f := range lr.Findings {
+			jl.Findings = append(jl.Findings, jsonFinding{
+				ID:          f.ID,
+				Title:       f.Title,
+				Severity:    strings.ToLower(string(f.Severity)),
+				Evidence:    f.Evidence,
+				Remediation: f.Remediation,
+				Reference:   f.Reference,
+				OWASPRef:    owaspRef(f.ID),
+				Fingerprint: fingerprint(f, result.Target),
+			})
+		}
+		out.Layers = append(out.Layers, jl)
+	}
+
+	data, err := json.MarshalIndent(out, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal json: %w", err)
 	}
@@ -155,10 +334,35 @@ func WriteJSON(result *scanner.ScanResult, path string) error {
 	return nil
 }
 
+// owaspRef maps a finding ID prefix to an OWASP LLM Top 10 2025 reference.
+func owaspRef(id string) string {
+	switch {
+	case strings.HasPrefix(id, "LLM01"):
+		return "LLM01:2025"
+	case strings.HasPrefix(id, "LLM02"):
+		return "LLM02:2025"
+	case strings.HasPrefix(id, "LLM05"):
+		return "LLM05:2025"
+	case strings.HasPrefix(id, "LLM06"):
+		return "LLM06:2025"
+	case strings.HasPrefix(id, "LLM07"):
+		return "LLM07:2025"
+	case strings.HasPrefix(id, "LLM09"):
+		return "LLM09:2025"
+	case strings.HasPrefix(id, "LLM10"):
+		return "LLM10:2025"
+	default:
+		return ""
+	}
+}
+
+// ─── Markdown output ──────────────────────────────────────────────────────────
+
 // WriteMarkdown writes the scan result as a Markdown report to the given path.
 func WriteMarkdown(result *scanner.ScanResult, path string) error {
 	var b strings.Builder
 	duration := result.EndTime.Sub(result.StartTime)
+	counts := result.TotalFindings()
 
 	b.WriteString("# 1scan Security Report\n\n")
 	b.WriteString(fmt.Sprintf("**Target:** %s  \n", result.Target))
@@ -166,7 +370,6 @@ func WriteMarkdown(result *scanner.ScanResult, path string) error {
 	b.WriteString(fmt.Sprintf("**Duration:** %s  \n\n", formatDuration(duration)))
 
 	// Summary table
-	counts := result.TotalFindings()
 	b.WriteString("## Summary\n\n")
 	b.WriteString("| Severity | Count |\n")
 	b.WriteString("|----------|-------|\n")
@@ -181,6 +384,17 @@ func WriteMarkdown(result *scanner.ScanResult, path string) error {
 	}
 	b.WriteString("\n")
 
+	// Attack chains section
+	if len(result.AttackChains) > 0 {
+		b.WriteString("## Attack Chains\n\n")
+		for _, c := range result.AttackChains {
+			b.WriteString(fmt.Sprintf("### %s: %s\n\n", c.ID, c.Title))
+			b.WriteString(fmt.Sprintf("**Severity:** %s  \n", c.Severity))
+			b.WriteString(fmt.Sprintf("**Scenario:** %s  \n", c.Description))
+			b.WriteString(fmt.Sprintf("**Findings:** %s  \n\n", strings.Join(c.FindingIDs, ", ")))
+		}
+	}
+
 	// Per-layer sections
 	for _, layer := range result.Layers {
 		if len(layer.Findings) == 0 {
@@ -188,7 +402,6 @@ func WriteMarkdown(result *scanner.ScanResult, path string) error {
 		}
 		b.WriteString(fmt.Sprintf("## %s\n\n", layerDisplayName(layer.Layer)))
 
-		// Layer summary table
 		b.WriteString("| ID | Title | Severity | Reference |\n")
 		b.WriteString("|----|-------|----------|-----------|\n")
 		for _, f := range layer.Findings {
@@ -200,7 +413,6 @@ func WriteMarkdown(result *scanner.ScanResult, path string) error {
 		}
 		b.WriteString("\n")
 
-		// Detailed findings
 		for _, f := range layer.Findings {
 			b.WriteString(fmt.Sprintf("### %s: %s\n", f.ID, f.Title))
 			b.WriteString(fmt.Sprintf("**Severity:** %s  \n", f.Severity))
@@ -208,7 +420,7 @@ func WriteMarkdown(result *scanner.ScanResult, path string) error {
 				b.WriteString(fmt.Sprintf("**Reference:** %s  \n", f.Reference))
 			}
 			if f.Evidence != "" {
-				b.WriteString(fmt.Sprintf("**Evidence:** %s  \n", f.Evidence))
+				b.WriteString(fmt.Sprintf("**Evidence:** `%s`  \n", f.Evidence))
 			}
 			if f.Remediation != "" {
 				b.WriteString(fmt.Sprintf("**Remediation:** %s\n", f.Remediation))
@@ -217,11 +429,15 @@ func WriteMarkdown(result *scanner.ScanResult, path string) error {
 		}
 	}
 
+	b.WriteString(fmt.Sprintf("---\n*Generated by 1scan v0.1.1 on %s*\n", result.StartTime.Format("2006-01-02 15:04:05 MST")))
+
 	if err := os.WriteFile(path, []byte(b.String()), 0644); err != nil {
 		return fmt.Errorf("write markdown file: %w", err)
 	}
 	return nil
 }
+
+// ─── HTML output ──────────────────────────────────────────────────────────────
 
 func htmlSeverityColor(s scanner.Severity) string {
 	switch s {
@@ -271,15 +487,20 @@ func WriteHTML(result *scanner.ScanResult, path string) error {
   body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #e2e8f0; line-height: 1.6; }
   .container { max-width: 960px; margin: 0 auto; padding: 2rem 1rem; }
   h1 { font-size: 1.5rem; font-weight: 700; margin-bottom: 0.25rem; }
+  h2 { font-size: 1.2rem; font-weight: 600; margin: 1.5rem 0 0.75rem; color: #93c5fd; }
   .meta { color: #94a3b8; font-size: 0.875rem; margin-bottom: 1.5rem; }
   .meta span { margin-right: 1.5rem; }
-  .summary { display: flex; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 2rem; }
+  .summary { display: flex; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
   .summary-card { padding: 0.5rem 1rem; border-radius: 0.375rem; font-weight: 600; font-size: 0.875rem; background: #1e293b; }
   .sev-CRITICAL { border-left: 4px solid #dc2626; }
   .sev-HIGH { border-left: 4px solid #ef4444; }
   .sev-MEDIUM { border-left: 4px solid #f59e0b; }
   .sev-LOW { border-left: 4px solid #06b6d4; }
   .sev-INFO { border-left: 4px solid #6b7280; }
+  .chain-card { background: #1e293b; border: 1px solid #dc2626; border-radius: 0.5rem; padding: 1rem; margin-bottom: 0.75rem; }
+  .chain-title { font-weight: 600; color: #fca5a5; margin-bottom: 0.375rem; }
+  .chain-scenario { color: #94a3b8; font-size: 0.875rem; font-style: italic; }
+  .chain-meta { font-size: 0.8125rem; color: #64748b; margin-top: 0.5rem; }
   .layer-section { margin-bottom: 2rem; }
   .layer-header { font-size: 1.1rem; font-weight: 600; color: #60a5fa; padding: 0.5rem 0; border-bottom: 1px solid #334155; margin-bottom: 0.75rem; }
   table { width: 100%; border-collapse: collapse; font-size: 0.875rem; margin-bottom: 1rem; }
@@ -320,6 +541,21 @@ func WriteHTML(result *scanner.ScanResult, path string) error {
 	}
 	b.WriteString(`</div>`)
 
+	// Attack chains section
+	if len(result.AttackChains) > 0 {
+		b.WriteString(`<h2>⚠ Attack Chains</h2>`)
+		for _, c := range result.AttackChains {
+			b.WriteString(`<div class="chain-card">`)
+			b.WriteString(fmt.Sprintf(`<div class="chain-title">%s <span class="badge" style="background:%s">%s</span></div>`,
+				htmlEscape(c.Title), htmlSeverityColor(c.Severity), c.Severity))
+			b.WriteString(fmt.Sprintf(`<div class="chain-scenario">→ %s</div>`, htmlEscape(c.Description)))
+			b.WriteString(fmt.Sprintf(`<div class="chain-meta">Findings: %s | Layers: %s</div>`,
+				htmlEscape(strings.Join(c.FindingIDs, ", ")),
+				htmlEscape(strings.Join(c.LayerNames, " + "))))
+			b.WriteString(`</div>`)
+		}
+	}
+
 	// Per-layer sections
 	for _, layer := range result.Layers {
 		if len(layer.Findings) == 0 {
@@ -328,7 +564,6 @@ func WriteHTML(result *scanner.ScanResult, path string) error {
 		b.WriteString(`<div class="layer-section">`)
 		b.WriteString(fmt.Sprintf(`<div class="layer-header">%s</div>`, layerDisplayName(layer.Layer)))
 
-		// Summary table
 		b.WriteString(`<table><thead><tr><th>ID</th><th>Title</th><th>Severity</th><th>Reference</th></tr></thead><tbody>`)
 		for _, f := range layer.Findings {
 			ref := f.Reference
@@ -345,7 +580,6 @@ func WriteHTML(result *scanner.ScanResult, path string) error {
 		}
 		b.WriteString(`</tbody></table>`)
 
-		// Detailed findings
 		for _, f := range layer.Findings {
 			b.WriteString(`<div class="finding-detail">`)
 			b.WriteString(fmt.Sprintf(`<div class="finding-title">%s: %s <span class="badge" style="background:%s">%s</span></div>`,
@@ -354,21 +588,22 @@ func WriteHTML(result *scanner.ScanResult, path string) error {
 			if f.Description != "" {
 				b.WriteString(fmt.Sprintf(`<div class="finding-field">%s</div>`, htmlEscape(f.Description)))
 			}
-			if f.Reference != "" {
-				b.WriteString(fmt.Sprintf(`<div class="finding-field"><strong>Reference:</strong> %s</div>`, htmlEscape(f.Reference)))
-			}
 			if f.Evidence != "" {
 				b.WriteString(fmt.Sprintf(`<div class="finding-field"><strong>Evidence:</strong><div class="evidence">%s</div></div>`, htmlEscape(f.Evidence)))
 			}
 			if f.Remediation != "" {
-				b.WriteString(fmt.Sprintf(`<div class="finding-field"><strong>Remediation:</strong> %s</div>`, htmlEscape(f.Remediation)))
+				b.WriteString(fmt.Sprintf(`<div class="finding-field"><strong>Fix:</strong> %s</div>`, htmlEscape(f.Remediation)))
+			}
+			if f.Reference != "" {
+				b.WriteString(fmt.Sprintf(`<div class="finding-field"><strong>Reference:</strong> %s</div>`, htmlEscape(f.Reference)))
 			}
 			b.WriteString(`</div>`)
 		}
 		b.WriteString(`</div>`)
 	}
 
-	b.WriteString(fmt.Sprintf(`<footer>Generated by 1scan v0.1.1 on %s</footer>`, result.StartTime.Format("2006-01-02 15:04:05 MST")))
+	b.WriteString(fmt.Sprintf(`<footer>Generated by 1scan v0.1.1 on %s — <a href="https://greentea.earth" style="color:#475569">greentea.earth</a></footer>`,
+		result.StartTime.Format("2006-01-02 15:04:05 MST")))
 	b.WriteString(`</div></body></html>`)
 
 	if err := os.WriteFile(path, []byte(b.String()), 0644); err != nil {
@@ -376,6 +611,8 @@ func WriteHTML(result *scanner.ScanResult, path string) error {
 	}
 	return nil
 }
+
+// ─── SARIF output ─────────────────────────────────────────────────────────────
 
 func sarifLevel(s scanner.Severity) string {
 	switch s {
@@ -403,6 +640,27 @@ func sarifSecuritySeverity(s scanner.Severity) float64 {
 	}
 }
 
+// sarifHelpMarkdown builds a help.markdown string for a SARIF rule.
+func sarifHelpMarkdown(f scanner.Finding) string {
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("## %s\n\n", f.Title))
+	if f.Description != "" {
+		b.WriteString(f.Description + "\n\n")
+	}
+	if f.Evidence != "" {
+		b.WriteString(fmt.Sprintf("**Evidence:** `%s`\n\n", f.Evidence))
+	}
+	if f.Remediation != "" {
+		b.WriteString(fmt.Sprintf("**Fix:** %s\n\n", f.Remediation))
+	}
+	if ref := owaspRef(f.ID); ref != "" {
+		b.WriteString(fmt.Sprintf("**OWASP Reference:** %s\n", ref))
+	} else if f.Reference != "" {
+		b.WriteString(fmt.Sprintf("**Reference:** %s\n", f.Reference))
+	}
+	return b.String()
+}
+
 // WriteSARIF writes the scan result as a SARIF 2.1.0 report to the given path.
 func WriteSARIF(result *scanner.ScanResult, path string) error {
 	rulesMap := make(map[string]sarifRule)
@@ -415,9 +673,14 @@ func WriteSARIF(result *scanner.ScanResult, path string) error {
 					ID:               f.ID,
 					Name:             f.Title,
 					ShortDescription: map[string]string{"text": f.Title},
-					DefaultConfig:    map[string]string{"level": sarifLevel(f.Severity)},
+					Help: map[string]string{
+						"text":     f.Remediation,
+						"markdown": sarifHelpMarkdown(f),
+					},
+					DefaultConfig: map[string]string{"level": sarifLevel(f.Severity)},
 					Properties: map[string]interface{}{
 						"security-severity": fmt.Sprintf("%.1f", sarifSecuritySeverity(f.Severity)),
+						"precision":        "high",
 					},
 				}
 			}
@@ -431,6 +694,9 @@ func WriteSARIF(result *scanner.ScanResult, path string) error {
 				RuleID:  f.ID,
 				Level:   sarifLevel(f.Severity),
 				Message: map[string]string{"text": msg},
+				PartialFingerprints: map[string]string{
+					"primaryLocationLineHash": fingerprint(f, result.Target),
+				},
 				Locations: []sarifLocation{
 					{
 						PhysicalLocation: sarifPhysical{

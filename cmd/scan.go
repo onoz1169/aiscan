@@ -44,6 +44,10 @@ var (
 	noShodan        bool
 	abuseipdbKey    string
 	vtAPIKey        string
+	lang            string
+	llmReport       bool
+	llmKey          string
+	llmModel        string
 )
 
 // ScanConfig mirrors the CLI flags for YAML config file support.
@@ -162,6 +166,12 @@ func init() {
 	scanCmd.Flags().StringVar(&abuseipdbKey, "abuseipdb-key", "", "AbuseIPDB API key for IP reputation checks (or set ABUSEIPDB_API_KEY env var)")
 	scanCmd.Flags().StringVar(&vtAPIKey, "vt-api-key", "", "VirusTotal API key for URL reputation checks (or set VT_API_KEY env var)")
 
+	// Language and LLM-enhanced report flags
+	scanCmd.Flags().StringVar(&lang, "lang", "en", "Report language: en, ja")
+	scanCmd.Flags().BoolVar(&llmReport, "llm-report", false, "Generate LLM-enhanced executive report (requires --llm-key)")
+	scanCmd.Flags().StringVar(&llmKey, "llm-key", "", "Anthropic API key for LLM report (or set ANTHROPIC_API_KEY env var)")
+	scanCmd.Flags().StringVar(&llmModel, "llm-model", "claude-sonnet-4-6", "Model for LLM report generation")
+
 	rootCmd.Flags().BoolVar(&showTools, "show-tools", false, "Show detected optional tools and exit")
 	rootCmd.AddCommand(scanCmd)
 }
@@ -241,13 +251,46 @@ func runScan(cmd *cobra.Command, args []string) error {
 
 	result.EndTime = time.Now()
 
+	// Detect cross-layer attack chains
+	result.AttackChains = scanner.DetectChains(result)
+
 	// Apply severity filter if set
 	if severityFilter != "" {
 		filterFindings(result, severityFilter)
 	}
 
-	if err := writeReport(result, outputFormat, outputFile); err != nil {
+	reportLang := report.ParseLang(lang)
+
+	if err := writeReport(result, outputFormat, outputFile, reportLang); err != nil {
 		return err
+	}
+
+	// Generate LLM-enhanced report if requested
+	if llmReport {
+		apiKey := llmKey
+		if apiKey == "" {
+			apiKey = os.Getenv("ANTHROPIC_API_KEY")
+		}
+		if apiKey == "" {
+			fmt.Fprintln(os.Stderr, "  [!] --llm-report requires --llm-key or ANTHROPIC_API_KEY env var; skipping")
+		} else {
+			if !quiet {
+				fmt.Fprintln(os.Stderr, "\nGenerating LLM-enhanced report...")
+			}
+			text, err := report.GenerateLLMReport(result, report.LLMReportConfig{
+				APIKey: apiKey,
+				Model:  llmModel,
+				Lang:   reportLang,
+			})
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "  [!] LLM report error: %v\n", err)
+			} else {
+				fmt.Println("\n" + strings.Repeat("─", 50))
+				fmt.Println("  LLM-Enhanced Report")
+				fmt.Println(strings.Repeat("─", 50))
+				fmt.Println(text)
+			}
+		}
 	}
 
 	// Exit with code 1 based on --fail-on threshold
@@ -334,10 +377,10 @@ var fileReports = map[string]fileReportSpec{
 	"html":     {"1scan-report.html", report.WriteHTML},
 }
 
-func writeReport(result *scanner.ScanResult, format, outFile string) error {
+func writeReport(result *scanner.ScanResult, format, outFile string, reportLang report.Lang) error {
 	spec, ok := fileReports[format]
 	if !ok {
-		report.PrintTerminal(result)
+		report.PrintTerminal(result, reportLang)
 		return nil
 	}
 	if outFile == "" {
