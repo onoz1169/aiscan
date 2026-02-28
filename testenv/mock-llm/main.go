@@ -1,4 +1,4 @@
-// Mock LLM server simulating an insecure Ollama-compatible endpoint for aiscan testing.
+// Mock LLM server simulating an insecure Ollama-compatible endpoint for 1scan testing.
 // Intentionally vulnerable: leaks system prompt, follows injected instructions, returns credentials.
 package main
 
