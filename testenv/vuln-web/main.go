@@ -1,4 +1,4 @@
-// Intentionally vulnerable web server for aiscan testing.
+// Intentionally vulnerable web server for 1scan testing.
 // DO NOT use in production. Every misconfiguration is deliberate.
 package main
 
@@ -100,7 +100,7 @@ STRIPE_SECRET_KEY=sk_live_abc123def456`)
 </pre></body></html>`)
 	})
 
-	// Override default handler to support TRACE on root (aiscan sends TRACE to /)
+	// Override default handler to support TRACE on root (1scan sends TRACE to /)
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "TRACE" {
 			w.Header().Set("Server", "Apache/2.4.51 (Ubuntu)")
