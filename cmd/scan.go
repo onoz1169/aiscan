@@ -48,6 +48,9 @@ var (
 	llmReport       bool
 	llmKey          string
 	llmModel        string
+	authHeader      string
+	authToken       string
+	authCookie      string
 )
 
 // ScanConfig mirrors the CLI flags for YAML config file support.
@@ -165,6 +168,11 @@ func init() {
 	scanCmd.Flags().BoolVar(&noShodan, "no-shodan", false, "Disable Shodan InternetDB enrichment")
 	scanCmd.Flags().StringVar(&abuseipdbKey, "abuseipdb-key", "", "AbuseIPDB API key for IP reputation checks (or set ABUSEIPDB_API_KEY env var)")
 	scanCmd.Flags().StringVar(&vtAPIKey, "vt-api-key", "", "VirusTotal API key for URL reputation checks (or set VT_API_KEY env var)")
+
+	// Authentication flags (passed to all scanner layers)
+	scanCmd.Flags().StringVar(&authHeader, "auth-header", "", "Auth header injected into every request, e.g. \"X-API-Key: mykey\" or \"Authorization: Bearer tok\"")
+	scanCmd.Flags().StringVar(&authToken, "auth-token", "", "Shorthand for Authorization: Bearer <token>")
+	scanCmd.Flags().StringVar(&authCookie, "auth-cookie", "", "Cookie header value injected into every request, e.g. \"session=abc; csrftoken=xyz\"")
 
 	// Language and LLM-enhanced report flags
 	scanCmd.Flags().StringVar(&lang, "lang", "en", "Report language: en, ja")
@@ -393,6 +401,14 @@ func writeReport(result *scanner.ScanResult, format, outFile string, reportLang 
 	return nil
 }
 
+func buildAuthOpts() scanner.AuthOptions {
+	return scanner.AuthOptions{
+		Header: authHeader,
+		Token:  authToken,
+		Cookie: authCookie,
+	}
+}
+
 func buildScanners(layers []string) []scanner.Scanner {
 	// Resolve NVD API key: flag > env var
 	nvdKey := nvdAPIKey
@@ -427,10 +443,12 @@ func buildScanners(layers []string) []scanner.Scanner {
 	}
 
 	var scanners []scanner.Scanner
+	auth := buildAuthOpts()
+
 	for _, l := range layers {
 		switch l {
 		case "network":
-			scanners = append(scanners, network.NewWithOptions(
+			scanners = append(scanners, network.NewWithAuth(
 				network.NmapOptions{
 					Disabled:   noNmap,
 					Path:       nmapPath,
@@ -441,17 +459,19 @@ func buildScanners(layers []string) []scanner.Scanner {
 					ShodanEnabled: !noShodan,
 					AbuseIPDB:     abuseClient,
 				},
+				auth,
 			))
 		case "webapp":
-			scanners = append(scanners, webapp.NewWithVT(
+			scanners = append(scanners, webapp.NewWithAll(
 				webapp.NucleiOptions{
 					Disabled:  noNuclei,
 					Templates: nucleiTemplates,
 				},
 				vtClient,
+				auth,
 			))
 		case "llm":
-			scanners = append(scanners, llm.New())
+			scanners = append(scanners, llm.NewWithAuth(auth))
 		default:
 			fmt.Fprintf(os.Stderr, "[!] Unknown layer: %s (skipping)\n", l)
 		}
