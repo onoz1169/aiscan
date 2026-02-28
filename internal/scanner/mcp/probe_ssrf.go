@@ -83,14 +83,31 @@ func checkSSRFTool(client *http.Client, endpoint string, tool MCPTool, result *s
 			continue
 		}
 
-		// Check if the response suggests internal access
 		lower := strings.ToLower(resp)
+
+		// Skip if server explicitly blocked the request (false-positive guard)
+		blockedIndicators := []string{
+			"not allowed", "blocked", "forbidden", "access denied",
+			"allowlist", "whitelist", "invalid url", "url not permitted",
+		}
+		blocked := false
+		for _, b := range blockedIndicators {
+			if strings.Contains(lower, b) {
+				blocked = true
+				break
+			}
+		}
+		if blocked {
+			continue
+		}
+
+		// Check for actual internal resource content in the response
 		ssrfIndicators := []string{
-			"instance-id", "ami-id", "local-ipv4",  // AWS IMDS
-			"compute", "project-id", "service-account", // GCP metadata
-			"subscriptionid", "vmid", "resourcegroupname", // Azure IMDS
-			"root:", "www-data:", "nginx", "apache",  // Internal server responses
-			"private_ip", "internal",
+			"instance-id", "ami-id", "local-ipv4", "availability-zone", // AWS IMDS
+			"\"compute\"", "project-id", "service-account",             // GCP metadata
+			"subscriptionid", "vmid", "resourcegroupname",              // Azure IMDS
+			"root:x:", "www-data:", "daemon:",                          // /etc/passwd
+			"<title>", "server: nginx", "server: apache",              // Internal HTTP server
 		}
 
 		for _, ind := range ssrfIndicators {
