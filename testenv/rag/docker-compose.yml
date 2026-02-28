@@ -1,0 +1,52 @@
+services:
+
+  # Local LLM server — runs llama3.2 (chat) and nomic-embed-text (embeddings)
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:11434/api/tags || exit 1"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 10s
+
+  # Pull required models before starting the app
+  ollama-init:
+    image: ollama/ollama:latest
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Pulling llama3.2 (~2GB, first run only)..." &&
+        ollama pull llama3.2 &&
+        echo "Pulling nomic-embed-text (~270MB, first run only)..." &&
+        ollama pull nomic-embed-text &&
+        echo "Models ready."
+    volumes:
+      - ollama_data:/root/.ollama
+
+  # Deliberately vulnerable RAG application
+  rag-app:
+    build: ./app
+    ports:
+      - "8080:8080"
+    environment:
+      - OLLAMA_URL=http://ollama:11434
+      - CHAT_MODEL=llama3.2
+      - EMBED_MODEL=nomic-embed-text
+    depends_on:
+      ollama-init:
+        condition: service_completed_successfully
+    volumes:
+      - ./documents:/app/../documents:ro
+
+volumes:
+  ollama_data:
